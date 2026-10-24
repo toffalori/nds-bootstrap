@@ -69,18 +69,22 @@ BEGIN_ASM_FUNC arm9_clearCache
 @ DScheevos: caches for the module's init, which the bootloader otherwise
 @ runs uncached (over a minute for a big achievement set on a DSi).
 @ Region 0: everything, uncached, so nothing faults. Region 1: main RAM
-@ through 0x02000000 (32 MB), instruction and data cached, write buffered,
-@ like a game's. The module's 0x0C000000 mirror stays in region 0: uncached,
-@ as the module expects. All regions read/write.
+@ through 0x02000000 (32 MB), instruction cached and data cached
+@ write-through (cacheable, not bufferable): the module reads the same RAM
+@ through its 0x0C000000 mirror, which stays in region 0, uncached, as the
+@ module expects; write-through keeps no dirty line, so a later write to a
+@ line's bytes through the mirror can never be undone by a write-back. All
+@ regions read/write.
 BEGIN_ASM_FUNC arm9_dscheevosCacheOn
 	mov r3, #0x3F					@ region 0: base 0, 4 GB, enabled
 	mcr p15, 0, r3, c6, c0, 0
 	mov r3, #0x02000000
 	orr r3, r3, #0x31				@ region 1: base 0x02000000, 32 MB, enabled
 	mcr p15, 0, r3, c6, c1, 0
-	mov r3, #0x02					@ region 1 cacheable (data and instructions), bufferable
+	mov r3, #0x02					@ region 1 cacheable (data and instructions)
 	mcr p15, 0, r3, c2, c0, 0
 	mcr p15, 0, r3, c2, c0, 1
+	mov r3, #0						@ no region bufferable: data cache write-through
 	mcr p15, 0, r3, c3, c0, 0
 	ldr r3, =0x33333333				@ every region: privileged and user read/write
 	mcr p15, 0, r3, c5, c0, 2
@@ -93,18 +97,38 @@ BEGIN_ASM_FUNC arm9_dscheevosCacheOn
 	orr r3, r3, #0x5				@ protection unit and DCache on
 	mcr p15, 0, r3, c1, c0, 0
 	bx lr
+	.pool							@ each function has its own section (asminc.h)
 
-@ Back to the bootloader's state: every dirty line to RAM, caches empty,
-@ regions off, caches and protection unit off.
+@ Back to the bootloader's state. Order matters: clean and drop every data
+@ cache line while the regions are still live, drain the write buffer, turn
+@ the caches and the protection unit off, and only then let arm9_clearCache
+@ reset the regions as at boot. With the protection unit still on, disabling
+@ every region (what arm9_clearCache does first) makes the very next
+@ instruction fetch abort, and the abort vector is out of every region too:
+@ the bootloader hung that way once.
 BEGIN_ASM_FUNC arm9_dscheevosCacheOff
-	push {lr}
-	bl arm9_clearCache
+	mov r1, #0
+1:
+	mov r0, #0
+2:
+	orr r2, r1, r0
+	mcr p15, 0, r2, c7, c14, 2		@ clean and invalidate DCache line by set and way
+	add r0, r0, #0x20
+	cmp r0, #0x400
+	bne 2b
+	add r1, r1, #0x40000000
+	cmp r1, #0x0
+	bne 1b
+	mov r3, #0
+	mcr p15, 0, r3, c7, c10, 4		@ drain write buffer
 	mrc p15, 0, r3, c1, c0, 0
 	bic r3, r3, #0x1000				@ ICache off
 	bic r3, r3, #0x5				@ protection unit and DCache off
 	mcr p15, 0, r3, c1, c0, 0
-	pop {lr}
-	bx lr
+	mov r3, #0
+	mcr p15, 0, r3, c7, c5, 0		@ flush ICache
+	mcr p15, 0, r3, c7, c6, 0		@ flush DCache
+	b arm9_clearCache				@ regions, permissions, TCM bases as at boot; returns to our caller
 	.pool
 
 BEGIN_ASM_FUNC arm9code

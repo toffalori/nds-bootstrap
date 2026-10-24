@@ -190,13 +190,46 @@ static char* placardStr(char* p, const char* s) {
 	return p;
 }
 
-static void placard(void) {
+// The module's status, at its physical address: the module's default build
+// links its data through the 0x0C000000 mirror, and the ARM7 has no cache
+// and reads the RAM where it is. NULL if the header's pointer is off.
+static const DScheevosStatus* statusPhys(void) {
 	const DScheevosStatus* s = *(const DScheevosStatus**)(DSCHEEVOS_LOCATION + DSCHEEVOS_H_STATUS);
-	// The module's default build links its data through the 0x0C000000 mirror;
-	// the ARM7 has no cache and reads the RAM at its physical address.
 	s = (const DScheevosStatus*)(((u32)s & 0x00FFFFFF) | 0x02000000);
-	if ((u32)s < DSCHEEVOS_LOCATION || (u32)s + sizeof(DScheevosStatus) > DSCHEEVOS_LOCATION + DSCHEEVOS_SIZE
-	 || !s->active || s->error) {
+	if ((u32)s < DSCHEEVOS_LOCATION || (u32)s + sizeof(DScheevosStatus) > DSCHEEVOS_LOCATION + DSCHEEVOS_SIZE) {
+		return NULL;
+	}
+	return s;
+}
+
+static u32 bootTicks(void) {
+	return ((u32)TIMER_DATA(1) << 16) | TIMER_DATA(0);
+}
+
+// Wait for the ARM9 to finish the module's init. After a minute, log what the
+// module's status says (its active and error words go through the uncached
+// mirror, so they are in RAM at once): active set means the init finished and
+// the ARM9 hung on its way back; nothing set means it hung inside. Then keep
+// waiting, as before.
+static void waitArm9Init(void) {
+	const u32 start = bootTicks();
+	bool reported = false;
+	while (arm9_stateFlag != ARM9_READY) {
+		if (!reported && bootTicks() - start > 60u * 32768u) {
+			const DScheevosStatus* s = statusPhys();
+			reported = true;
+			dbg_printf("DScheevos: ARM9 init over 60 s, status active=");
+			dbg_hexa(s ? s->active : 0xFFFFFFFF);
+			dbg_printf(" error=");
+			dbg_hexa(s ? s->error : 0xFFFFFFFF);
+			dbg_printf("\n");
+		}
+	}
+}
+
+static void placard(void) {
+	const DScheevosStatus* s = statusPhys();
+	if (!s || !s->active || s->error) {
 		return;
 	}
 	aFile file;
@@ -230,8 +263,7 @@ static void placard(void) {
 // Boot clock for the log: tenths of a second since the bootloader started
 // (ARM7 timers 0 and 1 cascaded at 32768 Hz, main.arm7.c).
 void dscheevosStamp(const char* what) {
-	const u32 ticks = ((u32)TIMER_DATA(1) << 16) | TIMER_DATA(0);
-	u32 tenths = ticks / 3277;
+	u32 tenths = bootTicks() / 3277;
 	char digits[12];
 	char out[14];
 	int n = 0, m = 0;
@@ -322,7 +354,7 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 	while (arm9_stateFlag != ARM9_READY); // an ESRB screen may still be up
 	dscheevosStamp("ARM9 init start");
 	arm9_stateFlag = ARM9_DSCHEEVOS_INIT;
-	while (arm9_stateFlag != ARM9_READY);
+	waitArm9Init();
 	dbg_printf("DScheevos: module ready\n");
 	dscheevosStamp("module ready");
 	placard();
