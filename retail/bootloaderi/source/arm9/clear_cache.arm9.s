@@ -66,6 +66,47 @@ BEGIN_ASM_FUNC arm9_clearCache
 
 	bx lr
 
+@ DScheevos: caches for the module's init, which the bootloader otherwise
+@ runs uncached (over a minute for a big achievement set on a DSi).
+@ Region 0: everything, uncached, so nothing faults. Region 1: main RAM
+@ through 0x02000000 (32 MB), instruction and data cached, write buffered,
+@ like a game's. The module's 0x0C000000 mirror stays in region 0: uncached,
+@ as the module expects. All regions read/write.
+BEGIN_ASM_FUNC arm9_dscheevosCacheOn
+	mov r3, #0x3F					@ region 0: base 0, 4 GB, enabled
+	mcr p15, 0, r3, c6, c0, 0
+	mov r3, #0x02000000
+	orr r3, r3, #0x31				@ region 1: base 0x02000000, 32 MB, enabled
+	mcr p15, 0, r3, c6, c1, 0
+	mov r3, #0x02					@ region 1 cacheable (data and instructions), bufferable
+	mcr p15, 0, r3, c2, c0, 0
+	mcr p15, 0, r3, c2, c0, 1
+	mcr p15, 0, r3, c3, c0, 0
+	ldr r3, =0x33333333				@ every region: privileged and user read/write
+	mcr p15, 0, r3, c5, c0, 2
+	mcr p15, 0, r3, c5, c0, 3
+	mov r3, #0
+	mcr p15, 0, r3, c7, c5, 0		@ flush ICache
+	mcr p15, 0, r3, c7, c6, 0		@ flush DCache
+	mrc p15, 0, r3, c1, c0, 0
+	orr r3, r3, #0x1000				@ ICache on
+	orr r3, r3, #0x5				@ protection unit and DCache on
+	mcr p15, 0, r3, c1, c0, 0
+	bx lr
+
+@ Back to the bootloader's state: every dirty line to RAM, caches empty,
+@ regions off, caches and protection unit off.
+BEGIN_ASM_FUNC arm9_dscheevosCacheOff
+	push {lr}
+	bl arm9_clearCache
+	mrc p15, 0, r3, c1, c0, 0
+	bic r3, r3, #0x1000				@ ICache off
+	bic r3, r3, #0x5				@ protection unit and DCache off
+	mcr p15, 0, r3, c1, c0, 0
+	pop {lr}
+	bx lr
+	.pool
+
 BEGIN_ASM_FUNC arm9code
 	mov r1, #0
 	mov r2, #0

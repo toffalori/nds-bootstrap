@@ -11,6 +11,7 @@
 #include <string.h>
 #include <nds/ndstypes.h>
 #include <nds/memory.h>
+#include <nds/timers.h>
 #include "tonccpy.h"
 #include "my_fat.h"
 #include "debug_file.h"
@@ -226,6 +227,29 @@ static void placard(void) {
 	while (arm9_stateFlag != ARM9_READY);
 }
 
+// Boot clock for the log: tenths of a second since the bootloader started
+// (ARM7 timers 0 and 1 cascaded at 32768 Hz, main.arm7.c).
+void dscheevosStamp(const char* what) {
+	const u32 ticks = ((u32)TIMER_DATA(1) << 16) | TIMER_DATA(0);
+	u32 tenths = ticks / 3277;
+	char digits[12];
+	char out[14];
+	int n = 0, m = 0;
+	do {
+		digits[n++] = '0' + tenths % 10;
+		tenths /= 10;
+	} while (tenths);
+	while (n) {
+		out[m++] = digits[--n];
+	}
+	out[m] = 0;
+	dbg_printf("DScheevos t=");
+	dbg_printf(out);
+	dbg_printf("/10 s: ");
+	dbg_printf(what);
+	dbg_printf("\n");
+}
+
 static void disable(const char* why) {
 	*(vu32*)(DSCHEEVOS_LOCATION + DSCHEEVOS_H_MAGIC) = 0;
 	dbg_printf("DScheevos off: ");
@@ -250,6 +274,7 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 		return;
 	}
 
+	dscheevosStamp("setup start");
 	aFile file;
 	getFileFromCluster(&file, dscheevosModuleCluster, false);
 	u32* header = (u32*)DSCHEEVOS_LOCATION;
@@ -261,6 +286,7 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 		return;
 	}
 	fileRead((char*)header, &file, 0, imageSize);
+	dscheevosStamp("module read");
 
 	getFileFromCluster(&file, dscheevosSessionCluster, false);
 	u32* session = (u32*)DSCHEEVOS_SESSION;
@@ -271,7 +297,9 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 		return;
 	}
 	fileRead((char*)session, &file, 0, sessionSize);
+	dscheevosStamp("session read");
 	wipeSession(&file, sessionSize);
+	dscheevosStamp("session wiped");
 	if (session[DSCHEEVOS_S_SIZE / 4] != DSCHEEVOS_S_BOOT_SIZE || sessionSize < DSCHEEVOS_S_BOOT_SIZE) {
 		disable("old session");
 		return;
@@ -280,13 +308,11 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 	// the speed the player chose before launch, for the module's status and journal
 	((u8*)session)[DSCHEEVOS_S_CLOCK] = (boostCpu ? DSCHEEVOS_CLOCK_CPU_133 : 0) | (boostVram ? DSCHEEVOS_CLOCK_VRAM : 0);
 
-	// Hardware bisect (Cheevotron, temporary): the module is loaded, initialized
-	// and shown on the placard, but the game's OS_Halt is left alone, so none of
-	// the module's idle-time code runs. If the game boots with this build, the
-	// crash seen on a real DSi is in the halt path; if it still crashes, it is
-	// elsewhere. To be reverted.
-	(void)patchOsHalt;
-	dbg_printf("DScheevos: bisect build, OS_Halt not patched\n");
+	if (patchOsHalt(ndsHeader, header[DSCHEEVOS_H_HALT / 4]) == 0) {
+		disable("no OS_Halt");
+		return;
+	}
+	dscheevosStamp("OS_Halt patched");
 
 	header[DSCHEEVOS_H_VBLANK_COUNT / 4] = 0;
 	ce7->dscheevosPendingCluster = dscheevosPendingCluster;
@@ -294,10 +320,13 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 	ce9->valueBits |= DSCHEEVOS_VALUEBIT;
 
 	while (arm9_stateFlag != ARM9_READY); // an ESRB screen may still be up
+	dscheevosStamp("ARM9 init start");
 	arm9_stateFlag = ARM9_DSCHEEVOS_INIT;
 	while (arm9_stateFlag != ARM9_READY);
 	dbg_printf("DScheevos: module ready\n");
+	dscheevosStamp("module ready");
 	placard();
+	dscheevosStamp("placard done");
 	if (!dscheevosPendingCluster) {
 		dbg_printf("DScheevos: no pending.bin, unsent unlocks won't be kept\n");
 	}

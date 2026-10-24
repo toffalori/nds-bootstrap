@@ -81,6 +81,7 @@ extern bool dscheevosWanted(void);
 extern bool dscheevosNetWanted(void);
 extern bool dscheevosHardcore(void);
 extern void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* ndsHeader);
+extern void dscheevosStamp(const char* what);
 
 //#define memcpy __builtin_memcpy
 
@@ -312,6 +313,12 @@ static void resetMemory_ARM7(void) {
 		TIMER_DATA(i) = 0;
 		for(reg=0; reg<0x1c; reg+=4)*((vu32*)(0x04004104 + ((i*0x1c)+reg))) = 0;//Reset NDMA.
 	}
+	// DScheevos: a boot clock for the log (timers 0+1 cascaded, 32768 Hz),
+	// stopped again right before the game starts
+	TIMER_DATA(0) = 0;
+	TIMER_DATA(1) = 0;
+	TIMER_CR(0) = TIMER_ENABLE | TIMER_DIV_1024;
+	TIMER_CR(1) = TIMER_ENABLE | TIMER_CASCADE;
 
 	REG_RCNT = 0;
 
@@ -2589,7 +2596,9 @@ int arm7_main(void) {
 		}
 
 		if (!ROMinRAM && ((ROMsupportsDsiMode(ndsHeader) && !isDSiWare && (!dsiModeConfirmed || consoleModel > 0)) || !ROMsupportsDsiMode(ndsHeader))) {
+			dscheevosStamp("ROM preload start");
 			loadROMPartIntoRAM(ndsHeader, romFile);
+			dscheevosStamp("ROM preload done");
 		}
 
 		if (!ROMinRAM && dsiWramAccess && !dsiWramMirrored && (!ROMsupportsDsiMode(ndsHeader) || !dsiModeConfirmed)) {
@@ -2693,6 +2702,12 @@ int arm7_main(void) {
 	if (!dsiModeConfirmed /*|| (ROMsupportsDsiMode(ndsHeader) && !isDSiWare)*/) {
 		REG_SCFG_EXT &= ~(1UL << 31); // Lock SCFG
 	}
+
+	dscheevosStamp("game start");
+	TIMER_CR(0) = 0;
+	TIMER_CR(1) = 0;
+	TIMER_DATA(0) = 0;
+	TIMER_DATA(1) = 0;
 
 	startBinary_ARM7();
 

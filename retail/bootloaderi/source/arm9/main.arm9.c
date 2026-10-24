@@ -48,6 +48,8 @@
 #define REG_MBK_CACHE_START	0x4004044
 
 extern void arm9_clearCache(void);
+extern void arm9_dscheevosCacheOn(void);
+extern void arm9_dscheevosCacheOff(void);
 extern void arm9code(u32* addr);
 
 u32* arm9executeAddress = NULL;
@@ -373,7 +375,14 @@ void arm9_main(void) {
 		if (arm9_stateFlag == ARM9_DSCHEEVOS_INIT) {
 			// DScheevos: set up achievements before the game starts (module switches to its own stack)
 			int (*dscheevosInit)(const void*) = *(int (**)(const void*))(DSCHEEVOS_LOCATION + DSCHEEVOS_H_INIT);
+			// The bootloader runs with the protection unit off, so without caches:
+			// parsing the achievement set that way took over a minute on a DSi.
+			// Give the module the caches a game would (main RAM cached through
+			// 0x02000000, its 0x0C000000 mirror not), then write everything back
+			// and return to the bootloader's uncached state.
+			arm9_dscheevosCacheOn();
 			dscheevosInit((const void*)DSCHEEVOS_SESSION);
+			arm9_dscheevosCacheOff();
 			arm9_stateFlag = ARM9_READY;
 		}
 		if (arm9_stateFlag == ARM9_DSCHEEVOS_PLACARD) {
