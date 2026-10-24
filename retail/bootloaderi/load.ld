@@ -5,7 +5,10 @@ ENTRY(_start)
 MEMORY {
 
 	vram	: ORIGIN = 0x06000000, LENGTH = 256K
-	arm9ram	: ORIGIN = 0x023BF000, LENGTH = 4K		/* Used for the ARM9's functions */
+	arm9ram	: ORIGIN = 0x023BE000, LENGTH = 8K		/* Used for the ARM9's functions. DScheevos: was 4K at 0x023BF000; the
+												   stacks sit at the top of this region and the user stack grows down
+												   into the code (no linker check), and the placard code left no room:
+												   main.arm7.c skips the region when it clears RAM */
 }
 
 __vram_start	=	ORIGIN(vram);
@@ -51,6 +54,7 @@ SECTIONS
 		__arm9_bss_end = ABSOLUTE(.);
 		__arm9_end = . ;
 	} >arm9ram AT>vram =0xff
+	ASSERT(__arm9_end + 0x200 <= __arm9_sp_usr, "arm9ram: the ARM9 code leaves under 512 bytes for its user stack")
 	__arm9_source_end = __arm9_source_start + SIZEOF(.arm9);
 
 	. = __arm9_source_end;
