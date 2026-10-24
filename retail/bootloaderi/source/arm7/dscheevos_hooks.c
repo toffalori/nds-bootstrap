@@ -191,6 +191,9 @@ static char* placardStr(char* p, const char* s) {
 
 static void placard(void) {
 	const DScheevosStatus* s = *(const DScheevosStatus**)(DSCHEEVOS_LOCATION + DSCHEEVOS_H_STATUS);
+	// The module's default build links its data through the 0x0C000000 mirror;
+	// the ARM7 has no cache and reads the RAM at its physical address.
+	s = (const DScheevosStatus*)(((u32)s & 0x00FFFFFF) | 0x02000000);
 	if ((u32)s < DSCHEEVOS_LOCATION || (u32)s + sizeof(DScheevosStatus) > DSCHEEVOS_LOCATION + DSCHEEVOS_SIZE
 	 || !s->active || s->error) {
 		return;
