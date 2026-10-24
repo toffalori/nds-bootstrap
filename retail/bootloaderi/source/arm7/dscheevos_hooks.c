@@ -280,10 +280,13 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 	// the speed the player chose before launch, for the module's status and journal
 	((u8*)session)[DSCHEEVOS_S_CLOCK] = (boostCpu ? DSCHEEVOS_CLOCK_CPU_133 : 0) | (boostVram ? DSCHEEVOS_CLOCK_VRAM : 0);
 
-	if (patchOsHalt(ndsHeader, header[DSCHEEVOS_H_HALT / 4]) == 0) {
-		disable("no OS_Halt");
-		return;
-	}
+	// Hardware bisect (Cheevotron, temporary): the module is loaded, initialized
+	// and shown on the placard, but the game's OS_Halt is left alone, so none of
+	// the module's idle-time code runs. If the game boots with this build, the
+	// crash seen on a real DSi is in the halt path; if it still crashes, it is
+	// elsewhere. To be reverted.
+	(void)patchOsHalt;
+	dbg_printf("DScheevos: bisect build, OS_Halt not patched\n");
 
 	header[DSCHEEVOS_H_VBLANK_COUNT / 4] = 0;
 	ce7->dscheevosPendingCluster = dscheevosPendingCluster;
