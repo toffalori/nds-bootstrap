@@ -859,8 +859,11 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp) {
 	u8* hb = (u8*)h;
 	// Power and reset the real Slot-1 card (the launcher path does not leave it
 	// ready as a cold boot would), then read it.
+	dbg_printf("DScheevos cart: enableSlot1\n");
 	my_enableSlot1();
+	dbg_printf("DScheevos cart: cardReset\n");
 	cardReset();
+	dbg_printf("DScheevos cart: cardInit\n");
 	cartErr = dscmCartInit(h, &chipID);
 	dbg_printf("DScheevos cart init err=");
 	dbg_hexa((u32)cartErr);
