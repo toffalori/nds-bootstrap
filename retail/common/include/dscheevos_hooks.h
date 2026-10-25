@@ -69,6 +69,7 @@
 #define DSCHEEVOS_S_BOOT_SIZE     0x25C
 #define DSCHEEVOS_AP_WPA2         3
 #define DSCHEEVOS_BOOT_SPECTATOR  0x01  // evaluate and show, send nothing
+#define DSCHEEVOS_BOOT_STREAM     0x04  // Cheevotron: stream RAM to the phone, no on-console placard
 
 // valueBits flag in both ce7 and ce9: hooks are live
 #define DSCHEEVOS_VALUEBIT        BIT(28)

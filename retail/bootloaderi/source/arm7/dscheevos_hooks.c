@@ -68,6 +68,22 @@ bool dscheevosHardcore(void) {
 	return cached;
 }
 
+// A Cheevotron stream session: the console runs no RetroAchievements itself,
+// so there is no achievement placard to show before the game.
+bool dscheevosStream(void) {
+	static int cached = -1;
+	if (cached < 0) {
+		u8 flags = 0;
+		if (dscheevosWanted()) {
+			aFile file;
+			getFileFromCluster(&file, dscheevosSessionCluster, false);
+			fileRead((char*)&flags, &file, DSCHEEVOS_S_FLAGS, 1);
+		}
+		cached = (flags & DSCHEEVOS_BOOT_STREAM) ? 1 : 0;
+	}
+	return cached;
+}
+
 // NitroSDK OS_Halt: mov r0, #0; mcr p15, 0, r0, c7, c0, 4; bx lr
 static int patchOsHalt(const tNDSHeader* ndsHeader, u32 haltEntry) {
 	u32* p = (u32*)ndsHeader->arm9destination;
@@ -357,7 +373,9 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 	waitArm9Init();
 	dbg_printf("DScheevos: module ready\n");
 	dscheevosStamp("module ready");
-	placard();
+	if (!dscheevosStream()) {   // a Cheevotron stream session shows no placard
+		placard();
+	}
 	dscheevosStamp("placard done");
 	if (!dscheevosPendingCluster) {
 		dbg_printf("DScheevos: no pending.bin, unsent unlocks won't be kept\n");
