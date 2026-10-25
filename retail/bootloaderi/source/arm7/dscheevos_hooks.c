@@ -68,9 +68,8 @@ bool dscheevosHardcore(void) {
 	return cached;
 }
 
-// A Cheevotron stream session: the console runs no RetroAchievements itself,
-// so there is no achievement placard to show before the game.
-bool dscheevosStream(void) {
+// The session's flags byte (DSCHEEVOS_BOOT_*), read once.
+static u8 dscheevosFlags(void) {
 	static int cached = -1;
 	if (cached < 0) {
 		u8 flags = 0;
@@ -79,9 +78,20 @@ bool dscheevosStream(void) {
 			getFileFromCluster(&file, dscheevosSessionCluster, false);
 			fileRead((char*)&flags, &file, DSCHEEVOS_S_FLAGS, 1);
 		}
-		cached = (flags & DSCHEEVOS_BOOT_STREAM) ? 1 : 0;
+		cached = flags;
 	}
-	return cached;
+	return (u8)cached;
+}
+
+// A Cheevotron stream session: the console runs no RetroAchievements itself,
+// so there is no achievement placard to show before the game.
+bool dscheevosStream(void) {
+	return (dscheevosFlags() & DSCHEEVOS_BOOT_STREAM) != 0;
+}
+
+// Boot the inserted Slot-1 cartridge natively instead of the SD ROM.
+bool dscheevosBootFromCart(void) {
+	return (dscheevosFlags() & DSCHEEVOS_BOOT_CART) != 0;
 }
 
 // NitroSDK OS_Halt: mov r0, #0; mcr p15, 0, r0, c7, c0, 4; bx lr
