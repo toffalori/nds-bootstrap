@@ -850,7 +850,7 @@ static void loadBinary_ARM7(const tDSiHeader* dsiHeaderTemp, aFile* file) {
 // ROM. Fills the same header globals loadBinary_ARM7 does (same byte offsets)
 // and loads the ARM9/ARM7 binaries from the cart. The card engine keeps our
 // Wi-Fi shim and serves the game's later reads from the cart.
-static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp) {
+static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp, aFile* romFile) {
 	extern void my_enableSlot1(void);
 	extern void cardReset(void);
 	u32 chipID = 0;
@@ -885,6 +885,26 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp) {
 		dscmCartRead((u32)h->arm9romOffset, (u32*)h->arm9destination, h->arm9binarySize);
 	}
 	dscmCartRead((u32)h->arm7romOffset, (u32*)h->arm7destination, h->arm7binarySize);
+	// Diagnostics. The SD dump stores the 0x4000-0x8000 secure area ENCRYPTED, so
+	// compare the cartridge against the SD dump in MAIN DATA (file >= 0x8000),
+	// which is plain in both: this tests the DATA_READ path. Separately log the
+	// decrypted secure-area start so a bad secure decrypt is visible by eye.
+	if (h->arm9binarySize > 0x4000) {
+		u8 sd[0x20];
+		u8* cart = (u8*)h->arm9destination;
+		u32 off = (u32)h->arm9romOffset + 0x4000;  // main data
+		fileRead((char*)sd, romFile, off, 0x20);
+		dbg_printf("DScheevos cart data cmp=");
+		dbg_hexa((u32)memcmp(cart + 0x4000, sd, 0x20));
+		dbg_printf(" cartData=");
+		dbg_hexa(*(u32*)(cart + 0x4000));
+		dbg_printf(" sdData=");
+		dbg_hexa(*(u32*)sd);
+		dbg_printf("\n  secureStart=");
+		dbg_hexa(*(u32*)cart);
+		dbg_hexa(*(u32*)(cart + 4));
+		dbg_printf("\n");
+	}
 	baseChipID     = chipID;
 	baseArm9Off    = *(u32*)(hb + 0x20);
 	baseArm9Size   = *(u32*)(hb + 0x2C);
@@ -1839,7 +1859,7 @@ int arm7_main(void) {
 	//bool dsiModeConfirmed;
 	dscheevosCartMode = dscheevosBootFromCart();
 	if (dscheevosCartMode) {
-		loadBinary_ARM7_cart(&dsiHeaderTemp);
+		loadBinary_ARM7_cart(&dsiHeaderTemp, romFile);
 	} else {
 		loadBinary_ARM7(&dsiHeaderTemp, romFile);
 	}
