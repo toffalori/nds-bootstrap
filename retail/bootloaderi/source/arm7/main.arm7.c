@@ -2373,7 +2373,11 @@ int arm7_main(void) {
 		}*/
 
 		if (!bootstrapOnFlashcard && !gameOnFlashcard && !saveOnFlashcard && REG_SCFG_EXT != 0 && !(REG_SCFG_MC & BIT(0))) {
-			if (specialCard || saveRelocation == FALSE) {
+			if (dscheevosCartMode) {
+				// Cart mode keeps Slot-1 powered: the game is the real cartridge,
+				// and its cloneboot/ARM9 card accesses must reach live hardware.
+				my_enableSlot1();
+			} else if (specialCard || saveRelocation == FALSE) {
 				// Enable Slot-1 for games that use IR
 				my_enableSlot1();
 			} else {

@@ -12,6 +12,7 @@
 #include "debug_file.h"
 #include <nds/card.h>
 
+extern bool dscheevosBootFromCart(void);
 extern u8 gameOnFlashcard;
 extern u8 saveOnFlashcard;
 extern u8 saveRelocation;
@@ -855,9 +856,13 @@ u32 patchCardNdsArm7(
 		// GameCodeMatch: Compare gamecodes between DS Cartridge and Rom on SD
 		// This file can active save located into DS Cartridge for dsi/3ds mode.
 		bool GameCodeMatch = false;
-		if (!gameOnFlashcard && !saveOnFlashcard && REG_SCFG_EXT != 0 && !(REG_SCFG_MC & BIT(0))) {
+		// In cart mode the card is in KEY2 data mode (dscmCartInit left it there);
+		// a raw CARD_CMD_HEADER_READ would desync KEY2 and break later card reads.
+		// The cartridge IS the game, so skip the check (GameCodeMatch stays false,
+		// save still relocates to SD, which is what we want).
+		if (!dscheevosBootFromCart() && !gameOnFlashcard && !saveOnFlashcard && REG_SCFG_EXT != 0 && !(REG_SCFG_MC & BIT(0))) {
 			char headerData[0x200] = {0};
-			cardParamCommand (CARD_CMD_HEADER_READ, 0, 
+			cardParamCommand (CARD_CMD_HEADER_READ, 0,
 				CARD_ACTIVATE | CARD_nRESET | CARD_CLK_SLOW | CARD_BLK_SIZE(1) | CARD_DELAY1(0x1FFF) | CARD_DELAY2(0x3F), 
 				(u32 *)headerData , 0x200 / sizeof(u32));
 			if(memcmp((const void*)(headerData + 0xC), ndsHeader->gameCode, 4) == 0)
