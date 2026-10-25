@@ -857,6 +857,12 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp) {
 	int cartErr;
 	tNDSHeader* h = &dsiHeaderTemp->ndshdr;
 	u8* hb = (u8*)h;
+	// The KEY1 blowfish table lives in the NTR (DS) ARM7 BIOS, and dscmCartInit
+	// reads it with a gadget that only exists in that BIOS. nds-bootstrap does
+	// not switch to the NTR BIOS until much later (NTR_BIOS at arm7_main's tail),
+	// so without this the gadget runs against the DSi BIOS and hangs. Switch now.
+	dbg_printf("DScheevos cart: NTR_BIOS\n");
+	NTR_BIOS();
 	// Power and reset the real Slot-1 card (the launcher path does not leave it
 	// ready as a cold boot would), then read it.
 	dbg_printf("DScheevos cart: enableSlot1\n");

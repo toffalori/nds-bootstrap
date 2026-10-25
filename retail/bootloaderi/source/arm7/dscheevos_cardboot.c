@@ -39,6 +39,9 @@ extern void cardParamCommand(u8 command, u32 parameter, u32 flags, u32* destinat
 extern void cardPolledTransfer(u32 flags, u32* destination, u32 length, const u8* command);
 /* the ARM7 BIOS reader (dscheevos_read_bios.s) */
 extern void dscmReadBios(u8* dest, u32 src, u32 size);
+/* bootloader debug log (debug_file.h) */
+extern u32 dbg_printf(const char* message);
+extern u32 dbg_hexa(u32 n);
 
 /* ---- KEY1 blowfish (NitroHax encryption.c) ---- */
 
@@ -215,13 +218,18 @@ int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {
 		CARD_ACTIVATE | CARD_nRESET | CARD_CLK_SLOW | CARD_BLK_SIZE(1) | CARD_DELAY1(0x1FFF) | CARD_DELAY2(0x3F),
 		(u32*)ndsHeader, sizeof(tNDSHeader));
 
+	dbg_printf("  cart hdr read, crc=");
+	dbg_hexa(ndsHeader->headerCRC16);
+	dbg_printf("\n");
 	if (ndsHeader->headerCRC16 != swiCRC16(0xFFFF, (void*)ndsHeader, 0x15E))
 		return DSCM_CART_ERR_HEAD_CRC;
 	if (ndsHeader->logoCRC16 != 0xCF56)
 		return DSCM_CART_ERR_LOGO_CRC;
 
 	gameCode = (GameCode*)ndsHeader->gameCode;
+	dbg_printf("  cart readBios...\n");
 	init_keycode(gameCode->key, 2, 8);
+	dbg_printf("  cart keycode ok\n");
 
 	portFlags = ndsHeader->cardControl13 & ~CARD_BLK_SIZE(7);
 	portFlagsKey1 = CARD_ACTIVATE | CARD_nRESET | (ndsHeader->cardControl13 & (CARD_WR | CARD_CLK_SLOW)) |
@@ -293,6 +301,7 @@ int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {
 		cardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
 	}
 
+	dbg_printf("  cart secure read ok\n");
 	decryptSecureArea(gameCode->key, secureAreaData);
 
 	secureArea = secureAreaData;
