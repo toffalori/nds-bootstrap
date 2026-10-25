@@ -2506,8 +2506,19 @@ int arm7_main(void) {
 			dbg_printf("Cloneboot detected\n");
 		}
 
+		// Cart mode reads the ROM from the cartridge on demand and never fills the
+		// SD preload region, so any advertised preload would be read from unfilled
+		// RAM (crash at game start). Zero it before anything downstream (trim,
+		// buildRomMap, the ARM9 hook) can advertise a RAM copy of the ROM.
+		if (dscheevosCartMode) {
+			dataToPreloadSize[0] = dataToPreloadSize[1] = dataToPreloadSize[2] = dataToPreloadSize[3] = 0;
+		}
+
 		// If possible, set to load ROM into RAM
 		u32 ROMinRAM = isROMLoadableInRAM(&dsiHeaderTemp, &dsiHeaderTemp.ndshdr, romTid, moduleParams, usesCloneboot);
+		if (dscheevosCartMode) {
+			ROMinRAM = 0;  // cart mode is always on-demand; no RAM copy is filled
+		}
 		if (ROMinRAM && dscheevosWanted() && !dscheevosRomMapFits(ndsHeader, moduleParams, laterSdk, usesCloneboot, ROMinRAM)) {
 			dbg_printf("DScheevos: ROM doesn't fit beside the module, cache mode\n");
 			ROMinRAM = 0;
