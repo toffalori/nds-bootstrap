@@ -13,6 +13,7 @@
 #include "nocashMessage.h"
 
 extern bool dscheevosWanted(void);
+extern bool dscheevosBootFromCart(void);
 
 #define b_saveOnFlashcard BIT(0)
 #define b_ROMinRAM BIT(1)
@@ -376,7 +377,10 @@ int hookNdsRetailArm9(
 			ce9->romLocation = ce9->cacheAddress;
 			ce9->cacheSlots = size/cacheBlockSize;
 		}
-		if (dataToPreloadFound(ndsHeader)) {
+		// Cart mode does no SD ROM preload (the ROM is read on demand), so the
+		// preloaded RAM is never filled. Advertising it as romPartSrc/romMap would
+		// make the ARM9 engine serve those ranges from garbage RAM. Skip it.
+		if (!dscheevosBootFromCart() && dataToPreloadFound(ndsHeader)) {
 			//ce9->romLocation[1] = ce9->romLocation[0]+dataToPreloadSize[0];
 			// ce9->romLocation -= dataToPreloadAddr[0];
 			//ce9->romLocation[1] -= dataToPreloadAddr[1];

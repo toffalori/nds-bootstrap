@@ -857,6 +857,9 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp) {
 	int cartErr;
 	tNDSHeader* h = &dsiHeaderTemp->ndshdr;
 	u8* hb = (u8*)h;
+	// dscmCartInit reads only the 0x200 NTR header; zero the rest so DSi-header
+	// fields are not stack garbage (loadHeader copies the whole struct).
+	toncset(dsiHeaderTemp, 0, sizeof(tDSiHeader));
 	// The KEY1 blowfish table lives in the NTR (DS) ARM7 BIOS, and dscmCartInit
 	// reads it with a gadget that only exists in that BIOS. nds-bootstrap does
 	// not switch to the NTR BIOS until much later (NTR_BIOS at arm7_main's tail),
@@ -2761,6 +2764,15 @@ int arm7_main(void) {
 	}*/
 			//*(vu32*)0x4004820 = (BIT(0) | BIT(2) | BIT(3) | BIT(24) | BIT(25) | BIT(29) | BIT(30));	// Set SD IRQ mask register
 			//*(vu32*)0x4004820 = 0x8B7F0305;	// Set SD IRQ mask register
+
+	if (dscheevosCartMode) {
+		// Diagnostic for the live-cart-read work: bits 2-3 of SCFG_MC are the
+		// Slot-1 power state. 0 here means the card was powered off before the
+		// game ran (so gameplay cart reads would need the slot re-enabled).
+		dbg_printf("DScheevos cart: SCFG_MC=");
+		dbg_hexa(REG_SCFG_MC);
+		dbg_printf("\n");
+	}
 
 	if (!dsiModeConfirmed /*|| (ROMsupportsDsiMode(ndsHeader) && !isDSiWare)*/) {
 		REG_SCFG_EXT &= ~(1UL << 31); // Lock SCFG
