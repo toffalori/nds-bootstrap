@@ -301,14 +301,21 @@ int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {
 		cardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
 	}
 
-	dbg_printf("  cart secure read ok\n");
+	dbg_printf("  cart secure read ok, enc=");
+	dbg_hexa(secureAreaData[0]);
+	dbg_hexa(secureAreaData[1]);
 	decryptSecureArea(gameCode->key, secureAreaData);
 
 	secureArea = secureAreaData;
+	dbg_printf(" dec=");
+	dbg_hexa(secureArea[0]);
+	dbg_hexa(secureArea[1]);
 	if (secureArea[0] == 0x72636e65 /*'encr'*/ && secureArea[1] == 0x6a624f79 /*'yObj'*/) {
+		dbg_printf(" encryObj\n");
 		secureArea[0] = 0xe7ffdeff;
 		secureArea[1] = 0xe7ffdeff;
 	} else {
+		dbg_printf(" WIPED\n");
 		for (i = 0; i < 0x200; i++)
 			*secureArea++ = 0xe7ffdeff;
 	}
