@@ -44,7 +44,12 @@ extern void dscmReadBios(u8* dest, u32 src, u32 size);
 
 #define KEYSIZE 0x1048
 static u32 keycode[3];
-static u32 keybuf[KEYSIZE / sizeof(u32)];
+/* The blowfish table (4 KB) and the decrypted secure area (16 KB) are too big
+ * for the bootloader's VRAM .bss. Put them in the DScheevos module carve-out
+ * (0x02D80000..0x02F80000), which is reserved and free during the cart read:
+ * the module only loads there later, at dscheevosSetup, after the cart boot is
+ * done with these buffers. */
+static u32* const keybuf = (u32*)0x02F04100;
 
 static void crypt_64bit_up(u32* ptr) {
 	u32 x = ptr[1];
@@ -126,7 +131,7 @@ typedef union {
 } GameCode;
 
 static u32 portFlags = 0;
-static u32 secureAreaData[CARD_SECURE_AREA_SIZE / sizeof(u32)];
+static u32* const secureAreaData = (u32*)0x02F00000;  /* see keybuf: in the module carve-out */
 
 static const u8 cardSeedBytes[] = { 0xE8, 0x4D, 0x5A, 0xB1, 0x17, 0x8F, 0x99, 0xD5 };
 
