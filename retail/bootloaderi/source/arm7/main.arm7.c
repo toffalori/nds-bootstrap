@@ -851,10 +851,24 @@ static void loadBinary_ARM7(const tDSiHeader* dsiHeaderTemp, aFile* file) {
 // and loads the ARM9/ARM7 binaries from the cart. The card engine keeps our
 // Wi-Fi shim and serves the game's later reads from the cart.
 static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp) {
+	extern void my_enableSlot1(void);
+	extern void cardReset(void);
 	u32 chipID = 0;
+	int cartErr;
 	tNDSHeader* h = &dsiHeaderTemp->ndshdr;
 	u8* hb = (u8*)h;
-	dscmCartInit(h, &chipID);
+	// Power and reset the real Slot-1 card (the launcher path does not leave it
+	// ready as a cold boot would), then read it.
+	my_enableSlot1();
+	cardReset();
+	cartErr = dscmCartInit(h, &chipID);
+	dbg_printf("DScheevos cart init err=");
+	dbg_hexa((u32)cartErr);
+	dbg_printf(" chipID=");
+	dbg_hexa(chipID);
+	dbg_printf(" arm9size=");
+	dbg_hexa(h->arm9binarySize);
+	dbg_printf("\n");
 	if ((u32)h->arm9destination < 0x02400000) {
 		dscmCartRead((u32)h->arm9romOffset, (u32*)h->arm9destination, h->arm9binarySize);
 	}
