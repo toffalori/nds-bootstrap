@@ -82,6 +82,10 @@ extern bool dscheevosNetWanted(void);
 extern bool dscheevosHardcore(void);
 extern void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* ndsHeader);
 extern void dscheevosStamp(const char* what);
+extern bool dscheevosBootFromCart(void);            // dscheevos_hooks.c
+extern int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID);   // dscheevos_cardboot.c
+extern void dscmCartRead(u32 src, u32* dest, size_t size);
+bool dscheevosCartMode = false;                     // boot the inserted Slot-1 cart, not the SD ROM
 
 //#define memcpy __builtin_memcpy
 
@@ -840,6 +844,35 @@ static void loadBinary_ARM7(const tDSiHeader* dsiHeaderTemp, aFile* file) {
 	}
 
 	sdmmc_set_ndma_slot(4);
+}
+
+// Cheevotron cart boot: read the inserted Slot-1 cartridge instead of the SD
+// ROM. Fills the same header globals loadBinary_ARM7 does (same byte offsets)
+// and loads the ARM9/ARM7 binaries from the cart. The card engine keeps our
+// Wi-Fi shim and serves the game's later reads from the cart.
+static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp) {
+	u32 chipID = 0;
+	tNDSHeader* h = &dsiHeaderTemp->ndshdr;
+	u8* hb = (u8*)h;
+	dscmCartInit(h, &chipID);
+	if ((u32)h->arm9destination < 0x02400000) {
+		dscmCartRead((u32)h->arm9romOffset, (u32*)h->arm9destination, h->arm9binarySize);
+	}
+	dscmCartRead((u32)h->arm7romOffset, (u32*)h->arm7destination, h->arm7binarySize);
+	baseChipID     = chipID;
+	baseArm9Off    = *(u32*)(hb + 0x20);
+	baseArm9Size   = *(u32*)(hb + 0x2C);
+	baseArm7Off    = *(u32*)(hb + 0x30);
+	baseArm7Size   = *(u32*)(hb + 0x3C);
+	baseFntOff     = *(u32*)(hb + 0x40);
+	baseFatOff     = *(u32*)(hb + 0x48);
+	baseFatSize    = *(u32*)(hb + 0x4C);
+	baseArm9OvlSrc = *(u32*)(hb + 0x50);
+	baseArm9OvlSize= *(u32*)(hb + 0x54);
+	baseSecureCRC  = *(u16*)(hb + 0x6C);
+	baseRomSize    = *(u32*)(hb + 0x80);
+	baseHeaderCRC  = *(u16*)(hb + 0x15E);
+	romPaddingSize = 0x20000 << *(u8*)(hb + 0x14);
 }
 
 static module_params_t* loadModuleParams(const tNDSHeader* ndsHeader, bool* foundPtr) {
@@ -1778,7 +1811,12 @@ int arm7_main(void) {
 	dbg_printf("Loading the NDS file...\n");
 
 	//bool dsiModeConfirmed;
-	loadBinary_ARM7(&dsiHeaderTemp, romFile);
+	dscheevosCartMode = dscheevosBootFromCart();
+	if (dscheevosCartMode) {
+		loadBinary_ARM7_cart(&dsiHeaderTemp);
+	} else {
+		loadBinary_ARM7(&dsiHeaderTemp, romFile);
+	}
 	if (dsiHeaderTemp.ndshdr.arm9binarySize == 0) {
 		dbg_printf("ARM9 binary is empty!");
 		errorOutput();
@@ -2596,9 +2634,11 @@ int arm7_main(void) {
 		}
 
 		if (!ROMinRAM && ((ROMsupportsDsiMode(ndsHeader) && !isDSiWare && (!dsiModeConfirmed || consoleModel > 0)) || !ROMsupportsDsiMode(ndsHeader))) {
-			dscheevosStamp("ROM preload start");
-			loadROMPartIntoRAM(ndsHeader, romFile);
-			dscheevosStamp("ROM preload done");
+			if (!dscheevosCartMode) {   // cart mode reads the cart on demand, no SD preload
+				dscheevosStamp("ROM preload start");
+				loadROMPartIntoRAM(ndsHeader, romFile);
+				dscheevosStamp("ROM preload done");
+			}
 		}
 
 		if (!ROMinRAM && dsiWramAccess && !dsiWramMirrored && (!ROMsupportsDsiMode(ndsHeader) || !dsiModeConfirmed)) {
