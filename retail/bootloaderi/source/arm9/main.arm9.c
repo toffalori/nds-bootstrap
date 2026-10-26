@@ -306,41 +306,26 @@ void arm9_main(void) {
 	// fades in over this).
 	SetBrightness(0, -31);
 	SetBrightness(1, -31);
-	bool brandTopSetup = false;
-	bool streamKnown = false, streamMode = false;   // the session is wiped during
-	                                                // init, so cache the flag once
 	while (arm9_stateFlag != ARM9_BOOTBIN) {
-		// Cheevotron (stream) mode shows no placard. Capture the stream flag the
-		// first time the session is valid (module init wipes it), then every frame
-		// hold the brand loading screen so the module's init/white cannot win. The
-		// top default (MODE_FB0 on VRAM_A) is the loader's scratch, so the top's
-		// brand screen is a BG bitmap in VRAM_E (which the loader never touches),
-		// like the bottom's sub BG on VRAM_H/I.
-		if (!streamKnown && *(u32*)DSCHEEVOS_SESSION == DSCHEEVOS_SESSION_MAGIC) {
-			streamKnown = true;
-			streamMode = (*(u8*)(DSCHEEVOS_SESSION + DSCHEEVOS_S_FLAGS) & DSCHEEVOS_BOOT_STREAM) != 0;
+		// DIAGNOSTIC: drive the bottom (sub BG on VRAM_H/I, proven) with a colour
+		// that names what the ARM9 reads at DSCHEEVOS_SESSION every frame:
+		//   red    = no session magic there
+		//   yellow = session present but no stream flag
+		//   indigo = stream flag set
+		// The top stays black. This tells us whether the stream detection is the
+		// problem before we build the real loading screen on it.
+		u16 col;
+		if (*(u32*)DSCHEEVOS_SESSION != DSCHEEVOS_SESSION_MAGIC) {
+			col = RGB15(31, 0, 0);
+		} else if (!(*(u8*)(DSCHEEVOS_SESSION + DSCHEEVOS_S_FLAGS) & DSCHEEVOS_BOOT_STREAM)) {
+			col = RGB15(31, 31, 0);
+		} else {
+			col = RGB15(2, 3, 9);
 		}
-		if (streamMode) {
-			if (!brandTopSetup) {
-				brandTopSetup = true;
-				VRAM_E_CR = VRAM_ENABLE | VRAM_E_MAIN_BG;   // map E to main BG @ 0x06000000
-				BG_PALETTE[1] = RGB15(2, 3, 9);
-				dmaFill9(0x01010101, (void*)0x06000000, 0x10000);  // 256x256 8bpp, index 1
-				REG_BG3PA = 0x0100;
-				REG_BG3PB = 0;
-				REG_BG3PC = 0;
-				REG_BG3PD = 0x0100;
-			}
-			REG_BG3CNT = (u16)BgSize_B8_256x256;
-			REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
-			SetBrightness(0, 0);
-			SetBrightness(1, 0);
-			topScreenFadedIn = true;
-			bottomScreenFadedIn = true;
-		} else if (!streamKnown) {
-			SetBrightness(0, -31);   // hold black until the mode is known
-			SetBrightness(1, -31);
-		}
+		BG_PALETTE_SUB[1] = col;
+		SetBrightness(0, -31);
+		SetBrightness(1, 0);
+		bottomScreenFadedIn = true;
 		if (placardFrames > 0) {
 			placardTick();
 		}
