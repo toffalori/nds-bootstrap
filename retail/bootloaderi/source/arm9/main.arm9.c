@@ -301,20 +301,20 @@ void arm9_main(void) {
 
 	// Set ARM9 state to ready and wait for it to change again
 	arm9_stateFlag = ARM9_READY;
-	bool brandShown = false;   // DScheevos/Cheevotron loading screen revealed once
+	// Black both screens until we know the mode, so the load does not show the
+	// boot white fade or raw framebuffer scratch (the other modes' placard/ESRB
+	// fades in over this).
+	SetBrightness(0, -31);
+	SetBrightness(1, -31);
 	while (arm9_stateFlag != ARM9_BOOTBIN) {
-		// Cheevotron (stream) mode shows no placard, so the screens would stay
-		// at the boot white fade for the whole load. Once the session is loaded
-		// and says stream, fade in the brand-colour screens filled above.
-		if (!brandShown
-		 && *(u32*)DSCHEEVOS_SESSION == DSCHEEVOS_SESSION_MAGIC
+		// Cheevotron (stream) mode shows no placard. The top screen is MODE_FB0 on
+		// VRAM_A, which the loader keeps scribbling over all through the load, so
+		// hold it black every frame; the bottom (sub BG on VRAM_H/I, filled above)
+		// is untouched, so show it at normal brightness for the brand colour.
+		if (*(u32*)DSCHEEVOS_SESSION == DSCHEEVOS_SESSION_MAGIC
 		 && (*(u8*)(DSCHEEVOS_SESSION + DSCHEEVOS_S_FLAGS) & DSCHEEVOS_BOOT_STREAM)) {
-			brandShown = true;
-			// The top screen is MODE_FB0 on VRAM_A, which the loader keeps writing
-			// during load (garbage/artifacts), so black it out instead of showing
-			// it. The bottom (sub BG on VRAM_H/I) is untouched: fade in the brand.
 			SetBrightness(0, -31);
-			fadeIn(BIT(1));
+			SetBrightness(1, 0);
 			bottomScreenFadedIn = true;
 		}
 		if (placardFrames > 0) {
