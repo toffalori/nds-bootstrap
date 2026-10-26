@@ -61,6 +61,8 @@
 #define b_clearRamOnReset BIT(23)
 #define b_saveRelocation BIT(24)
 #define b_asyncCardReadMinimal BIT(25)
+#define b_cartMode BIT(26)   // Cheevotron: read ROM from the real Slot-1 cartridge
+extern bool dscheevosBootFromCart(void);
 #define b_i2cBricked BIT(30)
 #define b_scfgLocked BIT(31)
 
@@ -377,6 +379,9 @@ int hookNdsRetailArm7(
 	ce7->screenshotCluster        = screenshotCluster;
 	ce7->pageFileCluster          = pageFileCluster;
 	ce7->manualCluster            = manualCluster;
+	if (dscheevosBootFromCart()) {
+		ce7->valueBits |= b_cartMode;   // read ROM from the real Slot-1 cartridge
+	}
 	if (gameOnFlashcard) {
 		ce7->valueBits |= b_gameOnFlashcard;
 	}

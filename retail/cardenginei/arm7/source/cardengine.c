@@ -84,8 +84,15 @@
 #define isDlp BIT(21)
 #define useColorLut BIT(22)
 #define clearRamOnReset BIT(23)
+#define cartMode BIT(26)   // Cheevotron: read ROM from the real Slot-1 cartridge
 #define i2cBricked BIT(30)
 #define scfgLocked BIT(31)
+
+// Cheevotron cart read (source/libnds/card.c): read the live cartridge.
+extern void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags);
+// The card's normal-command port setting is the NDS header's cardControl13
+// (header +0x60); drop the block-size field, dscmCartReadData sets its own.
+#define DSCM_CART_PORTFLAGS (*(u32*)((u8*)ndsHeader + 0x60) & ~0x07000000u)
 
 #define	REG_EXTKEYINPUT	(*(vuint16*)0x04000136)
 #define	REG_WIFIIRQ	(*(vuint16*)0x04808012)
@@ -546,6 +553,11 @@ void reset(const bool downloadedSrl) {
 		currentSrlAddr = *(u32*)(resetParam+0xC);
 		if ((valueBits & isDlp) || downloadedSrl) {
 			// ndmaCopyWordsAsynch(1, (u32*)0x022C0000, ndsHeader->arm7destination, ndsHeader->arm7binarySize);
+		} else if (valueBits & cartMode) {
+			// Cheevotron cart mode: reload the game from the real cartridge.
+			dscmCartReadData(currentSrlAddr, (u8*)ndsHeader, 0x160, DSCM_CART_PORTFLAGS);
+			dscmCartReadData(currentSrlAddr+ndsHeader->arm9romOffset, (u8*)ndsHeader->arm9destination, ndsHeader->arm9binarySize, DSCM_CART_PORTFLAGS);
+			dscmCartReadData(currentSrlAddr+ndsHeader->arm7romOffset, (u8*)ndsHeader->arm7destination, ndsHeader->arm7binarySize, DSCM_CART_PORTFLAGS);
 		} else {
 			if (!cardReadRAM((u8*)ndsHeader, currentSrlAddr, 0x160)) {
 				fileRead((char*)ndsHeader, romFile, currentSrlAddr, 0x160);
@@ -1537,6 +1549,23 @@ static bool start_cardRead_arm9(void) {
 	#ifdef DEBUG
 	nocashMessage("fileRead romFile");
 	#endif
+	// Cheevotron cart mode: the ROM is the real Slot-1 cartridge, so read it from
+	// the live card (the AP-fix overlays still come from their SD file).
+	if ((valueBits & cartMode) && !useApFixOverlays) {
+		static bool firstCartRead = true;
+		if (firstCartRead) {
+			firstCartRead = false;
+			dbg_printf("DScheevos: first cart ROM read src=");
+			dbg_hexa(src);
+			dbg_printf(" len=");
+			dbg_hexa(len);
+			dbg_printf("\n");
+		}
+		dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
+		readOngoing = false;
+		cardReadLED(false, isDma);
+		return true;
+	}
 	if ((dst % 4) == 0) {
 		if(!fileReadNonBLocking((char*)dst, useApFixOverlays ? apFixOverlaysFile : romFile, src, len))
 		{
@@ -1826,7 +1855,11 @@ void runCardEngineCheckHalt(void) {
 				// readOngoing = true;
 				if (lockMutex(&saveMutex)) {
 					cardReadLED(true, dmaLed);    // When a file is loading, turn on LED for card read indicator
-					fileRead((char*)dst, useApFixOverlays ? apFixOverlaysFile : romFile, src, len);
+					if ((valueBits & cartMode) && !useApFixOverlays) {
+						dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
+					} else {
+						fileRead((char*)dst, useApFixOverlays ? apFixOverlaysFile : romFile, src, len);
+					}
 					cardReadLED(false, dmaLed);    // After loading is done, turn off LED for card read indicator
 					unlockMutex(&saveMutex);
 				}
@@ -2826,10 +2859,14 @@ bool cardRead(u32 dma, u32 src, void *dst, u32 len) {
 		//driveInitialize();
 		cardReadLED(true, false);    // When a file is loading, turn on LED for card read indicator
 		//ndmaUsed = false;
-		#ifdef DEBUG	
+		#ifdef DEBUG
 		nocashMessage("fileRead romFile");
-		#endif	
-		fileRead(dst, romFile, src, len);
+		#endif
+		if (valueBits & cartMode) {
+			dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
+		} else {
+			fileRead(dst, romFile, src, len);
+		}
 		//ndmaUsed = true;
 		cardReadLED(false, false);    // After loading is done, turn off LED for card read indicator
 	}
