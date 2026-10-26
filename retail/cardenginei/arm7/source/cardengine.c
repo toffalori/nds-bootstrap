@@ -326,7 +326,9 @@ static void driveInitialize(void) {
 	// the few one-shot cart-read markers below reach the card. CARTDBG.LOG must
 	// already exist on the SD (pre-created large enough).
 	{
-		static aFile dscmDbgFile;
+		// Stack local, not static: enableDebug() copies it, and the TWL engine's
+		// .bss is a tiny VRAM region that a static aFile here overflows.
+		aFile dscmDbgFile;
 		getBootFileCluster(&dscmDbgFile, "CARTDBG.LOG", !(valueBits & b_dsiSD));
 		if (dscmDbgFile.firstCluster != CLUSTER_FREE) {
 			enableDebug(&dscmDbgFile);

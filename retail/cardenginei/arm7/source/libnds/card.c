@@ -26,8 +26,9 @@ static void dscmCardWriteCommand(const u8* command) {
 // Diagnostic: last ROMCTRL seen when a transfer ended, and whether the spin
 // bailed on the guard rather than on BUSY clearing. Lets a stuck CARD_BUSY be
 // logged instead of freezing the console forever.
-volatile u32 dscmLastRomctrl = 0;
-volatile u32 dscmSpinTimedOut = 0;
+// Forced into .data: the TWL card engine's .bss is a tiny VRAM region.
+volatile u32 dscmLastRomctrl __attribute__((section(".data"))) = 0;
+volatile u32 dscmSpinTimedOut __attribute__((section(".data"))) = 0;
 
 static void dscmCardPolledTransfer(u32 flags, u32* destination, u32 length, const u8* command) {
 	u32 data;
