@@ -277,6 +277,17 @@ void arm9_main(void) {
 
 	REG_POWERCNT = BIT(0) | BIT(9) | BIT(15); // POWER_LCD | POWER_2D_B | POWER_SWAP_LCDS
 
+	// DScheevos/Cheevotron: paint both screens a solid brand colour during the
+	// load so the window isn't raw/garbage VRAM. In stream (Cheevotron) mode no
+	// placard is shown, so this stays until the game draws; in the other modes
+	// the ESRB/placard fades in over it.
+	{
+		const u16 c = RGB15(2, 3, 9);
+		dmaFill9(((u32)(c | 0x8000) << 16) | (c | 0x8000), VRAM_A, 0x18000);  // top: MODE_FB0 framebuffer
+		BG_PALETTE_SUB[1] = c;
+		dmaFill9(0x01010101, BG_GFX_SUB, 0x10000);                            // bottom: BG3 8bpp bitmap
+	}
+
 	esrbOnlineNoticeFound = (*(u32*)IMAGES_LOCATION == 0x494C4E4F); // 'ONLI'
 
 	// Return to passme loop
