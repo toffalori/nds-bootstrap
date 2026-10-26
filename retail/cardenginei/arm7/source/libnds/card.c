@@ -14,7 +14,7 @@
 #include <nds/memory.h>
 #include <string.h>
 
-static void cardWriteCommand(const u8* command) {
+static void dscmCardWriteCommand(const u8* command) {
 	int index;
 	REG_AUXSPICNTH = CARD_CR1_ENABLE | CARD_CR1_IRQ;
 	for (index = 0; index < 8; index++) {
@@ -22,9 +22,9 @@ static void cardWriteCommand(const u8* command) {
 	}
 }
 
-static void cardPolledTransfer(u32 flags, u32* destination, u32 length, const u8* command) {
+static void dscmCardPolledTransfer(u32 flags, u32* destination, u32 length, const u8* command) {
 	u32 data;
-	cardWriteCommand(command);
+	dscmCardWriteCommand(command);
 	REG_ROMCTRL = flags;
 	u32* target = destination + length;
 	do {
@@ -36,7 +36,7 @@ static void cardPolledTransfer(u32 flags, u32* destination, u32 length, const u8
 	} while (REG_ROMCTRL & CARD_BUSY);
 }
 
-static void cardParamCommand(u8 command, u32 parameter, u32 flags, u32* destination, u32 length) {
+static void dscmCardParamCommand(u8 command, u32 parameter, u32 flags, u32* destination, u32 length) {
 	u8 cmdData[8];
 	cmdData[7] = (u8)command;
 	cmdData[6] = (u8)(parameter >> 24);
@@ -46,7 +46,7 @@ static void cardParamCommand(u8 command, u32 parameter, u32 flags, u32* destinat
 	cmdData[2] = 0;
 	cmdData[1] = 0;
 	cmdData[0] = 0;
-	cardPolledTransfer(flags, destination, length, cmdData);
+	dscmCardPolledTransfer(flags, destination, length, cmdData);
 }
 
 /* Read `len` bytes from ROM offset `src` of the live cartridge into `dst`.
@@ -62,7 +62,7 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 		u32 off = src & 0x1FFu;
 		u32 n = 0x200u - off;
 		if (n > len) n = len;
-		cardParamCommand(CARD_CMD_DATA_READ, blockBase, cmdFlags, block, 0x200 / sizeof(u32));
+		dscmCardParamCommand(CARD_CMD_DATA_READ, blockBase, cmdFlags, block, 0x200 / sizeof(u32));
 		memcpy(dst, (u8*)block + off, n);
 		dst += n;
 		src += n;
