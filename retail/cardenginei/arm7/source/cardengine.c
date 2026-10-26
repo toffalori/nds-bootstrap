@@ -327,7 +327,7 @@ static void driveInitialize(void) {
 	// already exist on the SD (pre-created large enough).
 	{
 		static aFile dscmDbgFile;
-		getBootFileCluster(&dscmDbgFile, "CARTDBG.LOG", 0, !(valueBits & b_dsiSD));
+		getBootFileCluster(&dscmDbgFile, "CARTDBG.LOG", !(valueBits & b_dsiSD));
 		if (dscmDbgFile.firstCluster != CLUSTER_FREE) {
 			enableDebug(&dscmDbgFile);
 			dbg_printf("DSCM diag log ready\n");
@@ -1884,7 +1884,7 @@ void runCardEngineCheckHalt(void) {
 							dbg_printf(" len="); dbg_hexa(len);
 							dbg_printf(" dst="); dbg_hexa(dst);
 							dbg_printf(" exmem="); dbg_hexa(*(vu16*)0x04000204);
-							dbg_printf(" romctrl="); dbg_hexa(REG_ROMCTRL);
+							dbg_printf(" romctrl="); dbg_hexa(*(volatile u32*)0x040001A4);
 							dbg_printf(" flags="); dbg_hexa(DSCM_CART_PORTFLAGS);
 							dbg_printf("\n");
 							fileRead((char*)sdblk, romFile, src, 0x200);
