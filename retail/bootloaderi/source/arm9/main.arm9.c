@@ -268,24 +268,28 @@ void arm9_main(void) {
 	VRAM_H_CR = VRAM_ENABLE | VRAM_H_SUB_BG;
 	VRAM_I_CR = VRAM_ENABLE | VRAM_I_SUB_BG_0x06208000;
 
-	REG_DISPCNT = MODE_FB0;
+	// DScheevos/Cheevotron: drive BOTH screens from BG3 bitmaps on VRAM the loader
+	// never scribbles over (top on VRAM_E, bottom on VRAM_H/I), not the loader's
+	// MODE_FB0 scratch (VRAM_A). Filled with a solid brand colour, this is the
+	// whole-load loading screen; the wait loop below holds it every frame.
+	VRAM_E_CR = VRAM_ENABLE | VRAM_E_MAIN_BG;   // E -> main BG @ 0x06000000
+	REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
+	REG_BG3CNT = (u16)BgSize_B8_256x256;
+	REG_BG3PA = 0x0100;
+	REG_BG3PD = 0x0100;
 	REG_DISPCNT_SUB = MODE_3_2D | DISPLAY_BG3_ACTIVE;
 	REG_BG3CNT_SUB = (u16)BgSize_B8_256x256;
-
 	REG_BG3PA_SUB = 0x0100;
 	REG_BG3PD_SUB = 0x0100;
 
 	REG_POWERCNT = BIT(0) | BIT(9) | BIT(15); // POWER_LCD | POWER_2D_B | POWER_SWAP_LCDS
 
-	// DScheevos/Cheevotron: paint both screens a solid brand colour during the
-	// load so the window isn't raw/garbage VRAM. In stream (Cheevotron) mode no
-	// placard is shown, so this stays until the game draws; in the other modes
-	// the ESRB/placard fades in over it.
 	{
 		const u16 c = RGB15(2, 3, 9);
-		dmaFill9(((u32)(c | 0x8000) << 16) | (c | 0x8000), VRAM_A, 0x18000);  // top: MODE_FB0 framebuffer
+		BG_PALETTE[1] = c;
 		BG_PALETTE_SUB[1] = c;
-		dmaFill9(0x01010101, BG_GFX_SUB, 0x10000);                            // bottom: BG3 8bpp bitmap
+		dmaFill9(0x01010101, (void*)0x06000000, 0x10000);   // top: VRAM_E BG3 8bpp
+		dmaFill9(0x01010101, BG_GFX_SUB, 0x10000);          // bottom: VRAM_H/I BG3 8bpp
 	}
 
 	esrbOnlineNoticeFound = (*(u32*)IMAGES_LOCATION == 0x494C4E4F); // 'ONLI'
@@ -301,46 +305,19 @@ void arm9_main(void) {
 
 	// Set ARM9 state to ready and wait for it to change again
 	arm9_stateFlag = ARM9_READY;
-	// Black both screens until we know the mode, so the load does not show the
-	// boot white fade or raw framebuffer scratch (the other modes' placard/ESRB
-	// fades in over this).
-	SetBrightness(0, -31);
-	SetBrightness(1, -31);
-	bool brandSetup = false, streamMode = false;
 	while (arm9_stateFlag != ARM9_BOOTBIN) {
-		// Cheevotron (stream) mode shows no placard. The session is only valid at
-		// DSCHEEVOS_SESSION for part of the load (loaded late, then wiped at init),
-		// so latch stream TRUE the first frame it is seen and never clear it. While
-		// stream, every frame hold the brand loading screen: top on a BG bitmap in
-		// VRAM_E (the loader's own top is MODE_FB0 on its scratch VRAM_A), bottom on
-		// the sub BG (VRAM_H/I, filled above). Before the mode is known, black both.
-		if (!streamMode
-		 && *(u32*)DSCHEEVOS_SESSION == DSCHEEVOS_SESSION_MAGIC
-		 && (*(u8*)(DSCHEEVOS_SESSION + DSCHEEVOS_S_FLAGS) & DSCHEEVOS_BOOT_STREAM)) {
-			streamMode = true;
-		}
-		if (streamMode) {
-			if (!brandSetup) {
-				brandSetup = true;
-				VRAM_E_CR = VRAM_ENABLE | VRAM_E_MAIN_BG;   // map E to main BG @ 0x06000000
-				BG_PALETTE[1] = RGB15(2, 3, 9);
-				BG_PALETTE_SUB[1] = RGB15(2, 3, 9);
-				dmaFill9(0x01010101, (void*)0x06000000, 0x10000);  // 256x256 8bpp, index 1
-				REG_BG3PA = 0x0100;
-				REG_BG3PB = 0;
-				REG_BG3PC = 0;
-				REG_BG3PD = 0x0100;
-			}
-			REG_BG3CNT = (u16)BgSize_B8_256x256;
-			REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
-			SetBrightness(0, 0);
-			SetBrightness(1, 0);
-			topScreenFadedIn = true;
-			bottomScreenFadedIn = true;
-		} else {
-			SetBrightness(0, -31);
-			SetBrightness(1, -31);
-		}
+		// Hold the brand loading screen every frame: the loader and the module
+		// keep resetting video/brightness during the load, so re-assert the BG3
+		// bitmaps (top VRAM_E, bottom VRAM_H/I) and normal brightness. The game
+		// takes over when the loop exits.
+		REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
+		REG_BG3CNT = (u16)BgSize_B8_256x256;
+		REG_DISPCNT_SUB = MODE_3_2D | DISPLAY_BG3_ACTIVE;
+		REG_BG3CNT_SUB = (u16)BgSize_B8_256x256;
+		SetBrightness(0, 0);
+		SetBrightness(1, 0);
+		topScreenFadedIn = true;
+		bottomScreenFadedIn = true;
 		if (placardFrames > 0) {
 			placardTick();
 		}
