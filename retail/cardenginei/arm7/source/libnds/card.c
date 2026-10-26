@@ -49,23 +49,34 @@ static void dscmCardParamCommand(u8 command, u32 parameter, u32 flags, u32* dest
 	dscmCardPolledTransfer(flags, destination, length, cmdData);
 }
 
+/* A partial/unaligned block: read the whole 0x200 block into a stack scratch
+ * and copy out just [off, off+n). Kept out of line so the common aligned path
+ * (which runs in the card IRQ) never reserves this 0x200-byte frame, and so the
+ * scratch is never in .bss (the TWL card engine's .bss is a tiny VRAM region). */
+static void __attribute__((noinline)) dscmCartReadPartial(u32 blockBase, u8* dst, u32 off, u32 n, u32 cmdFlags) {
+	u32 block[0x200 / sizeof(u32)] __attribute__((aligned(4)));
+	dscmCardParamCommand(CARD_CMD_DATA_READ, blockBase, cmdFlags, block, 0x200 / sizeof(u32));
+	memcpy(dst, (u8*)block + off, n);
+}
+
 /* Read `len` bytes from ROM offset `src` of the live cartridge into `dst`.
- * portFlags is the header's cardControl13 (header +0x60). Reads whole aligned
- * 0x200 blocks into a scratch and copies out just the requested range, so an
- * unaligned src or a non-0x200 length never overruns dst. The card mirrors the
- * secure area (<0x8000) to 0x8000+(addr&0x1FF) by itself, so no special case. */
+ * portFlags is the header's cardControl13 (header +0x60). Whole aligned 0x200
+ * blocks (the gameplay cache reads) go straight into dst; any unaligned head or
+ * short tail goes through dscmCartReadPartial, so dst is never overrun. The card
+ * mirrors the secure area (<0x8000) to 0x8000+(addr&0x1FF) itself. dst must be
+ * word-aligned, as the game's cache buffers and the reload targets are. */
 void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
-	static u32 block[0x200 / sizeof(u32)] __attribute__((aligned(4)));
 	const u32 cmdFlags = (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(1);
 	while (len > 0) {
-		u32 blockBase = src & ~0x1FFu;
 		u32 off = src & 0x1FFu;
-		u32 n = 0x200u - off;
-		if (n > len) n = len;
-		dscmCardParamCommand(CARD_CMD_DATA_READ, blockBase, cmdFlags, block, 0x200 / sizeof(u32));
-		memcpy(dst, (u8*)block + off, n);
-		dst += n;
-		src += n;
-		len -= n;
+		if (off == 0 && len >= 0x200u) {
+			dscmCardParamCommand(CARD_CMD_DATA_READ, src, cmdFlags, (u32*)dst, 0x200 / sizeof(u32));
+			dst += 0x200; src += 0x200; len -= 0x200;
+		} else {
+			u32 n = 0x200u - off;
+			if (n > len) n = len;
+			dscmCartReadPartial(src & ~0x1FFu, dst, off, n, cmdFlags);
+			dst += n; src += n; len -= n;
+		}
 	}
 }
