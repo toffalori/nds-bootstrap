@@ -310,8 +310,11 @@ void arm9_main(void) {
 		 && *(u32*)DSCHEEVOS_SESSION == DSCHEEVOS_SESSION_MAGIC
 		 && (*(u8*)(DSCHEEVOS_SESSION + DSCHEEVOS_S_FLAGS) & DSCHEEVOS_BOOT_STREAM)) {
 			brandShown = true;
-			fadeIn(BIT(0) | BIT(1));
-			topScreenFadedIn = true;
+			// The top screen is MODE_FB0 on VRAM_A, which the loader keeps writing
+			// during load (garbage/artifacts), so black it out instead of showing
+			// it. The bottom (sub BG on VRAM_H/I) is untouched: fade in the brand.
+			SetBrightness(0, -31);
+			fadeIn(BIT(1));
 			bottomScreenFadedIn = true;
 		}
 		if (placardFrames > 0) {
