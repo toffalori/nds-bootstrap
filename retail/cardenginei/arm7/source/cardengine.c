@@ -325,9 +325,12 @@ static void driveInitialize(void) {
 	// DEBUG, so its dbg_printf is a no-op. Point it at a dedicated SD file so
 	// the few one-shot cart-read markers below reach the card. CARTDBG.LOG must
 	// already exist on the SD (pre-created large enough).
+	// Only in the NTR engine (the one a cart game like SM64DS uses). The TWL
+	// engine's .bss is a tiny VRAM region, and pulling in the FAT-write path
+	// via dbg_printf overflows it.
+	#ifndef TWLSDK
 	{
-		// Stack local, not static: enableDebug() copies it, and the TWL engine's
-		// .bss is a tiny VRAM region that a static aFile here overflows.
+		// Stack local, not static: enableDebug() copies it.
 		aFile dscmDbgFile;
 		getBootFileCluster(&dscmDbgFile, "CARTDBG.LOG", !(valueBits & b_dsiSD));
 		if (dscmDbgFile.firstCluster != CLUSTER_FREE) {
@@ -335,6 +338,7 @@ static void driveInitialize(void) {
 			dbg_printf("DSCM diag log ready\n");
 		}
 	}
+	#endif
 
 	#ifdef DEBUG
 	aFile myDebugFile;
@@ -1877,6 +1881,8 @@ void runCardEngineCheckHalt(void) {
 						// whether it returned, the final ROMCTRL, and cart vs SD
 						// data. Decides hang (spin timed out) vs garbage (cmp != 0)
 						// vs good-data-dies-later (cmp == 0, returned).
+						// NTR engine only; the TWL engine cannot afford the log path.
+						#ifndef TWLSDK
 						static bool dscmDiagOnce = true;
 						if (dscmDiagOnce) {
 							dscmDiagOnce = false;
@@ -1900,6 +1906,9 @@ void runCardEngineCheckHalt(void) {
 						} else {
 							dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
 						}
+						#else
+						dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
+						#endif
 					} else {
 						fileRead((char*)dst, useApFixOverlays ? apFixOverlaysFile : romFile, src, len);
 					}
