@@ -307,14 +307,20 @@ void arm9_main(void) {
 	SetBrightness(0, -31);
 	SetBrightness(1, -31);
 	bool brandTopSetup = false;
+	bool streamKnown = false, streamMode = false;   // the session is wiped during
+	                                                // init, so cache the flag once
 	while (arm9_stateFlag != ARM9_BOOTBIN) {
-		// Cheevotron (stream) mode shows no placard. The top default (MODE_FB0 on
-		// VRAM_A) is the loader's scratch, so move the top's brand screen onto a
-		// dedicated BG bitmap in VRAM_E (which the loader never touches), the same
-		// way the bottom uses the sub BG on VRAM_H/I. Then both stay the brand
-		// colour, stable, for the whole load.
-		if (*(u32*)DSCHEEVOS_SESSION == DSCHEEVOS_SESSION_MAGIC
-		 && (*(u8*)(DSCHEEVOS_SESSION + DSCHEEVOS_S_FLAGS) & DSCHEEVOS_BOOT_STREAM)) {
+		// Cheevotron (stream) mode shows no placard. Capture the stream flag the
+		// first time the session is valid (module init wipes it), then every frame
+		// hold the brand loading screen so the module's init/white cannot win. The
+		// top default (MODE_FB0 on VRAM_A) is the loader's scratch, so the top's
+		// brand screen is a BG bitmap in VRAM_E (which the loader never touches),
+		// like the bottom's sub BG on VRAM_H/I.
+		if (!streamKnown && *(u32*)DSCHEEVOS_SESSION == DSCHEEVOS_SESSION_MAGIC) {
+			streamKnown = true;
+			streamMode = (*(u8*)(DSCHEEVOS_SESSION + DSCHEEVOS_S_FLAGS) & DSCHEEVOS_BOOT_STREAM) != 0;
+		}
+		if (streamMode) {
 			if (!brandTopSetup) {
 				brandTopSetup = true;
 				VRAM_E_CR = VRAM_ENABLE | VRAM_E_MAIN_BG;   // map E to main BG @ 0x06000000
@@ -324,13 +330,16 @@ void arm9_main(void) {
 				REG_BG3PB = 0;
 				REG_BG3PC = 0;
 				REG_BG3PD = 0x0100;
-				REG_BG3CNT = (u16)BgSize_B8_256x256;
-				REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
 			}
+			REG_BG3CNT = (u16)BgSize_B8_256x256;
+			REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
 			SetBrightness(0, 0);
 			SetBrightness(1, 0);
 			topScreenFadedIn = true;
 			bottomScreenFadedIn = true;
+		} else if (!streamKnown) {
+			SetBrightness(0, -31);   // hold black until the mode is known
+			SetBrightness(1, -31);
 		}
 		if (placardFrames > 0) {
 			placardTick();
