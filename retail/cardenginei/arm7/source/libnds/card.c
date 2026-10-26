@@ -12,6 +12,7 @@
 
 #include <nds/card.h>
 #include <nds/memory.h>
+#include <nds/interrupts.h>
 #include <string.h>
 
 static void dscmCardWriteCommand(const u8* command) {
@@ -55,7 +56,9 @@ static void dscmCardParamCommand(u8 command, u32 parameter, u32 flags, u32* dest
  * scratch is never in .bss (the TWL card engine's .bss is a tiny VRAM region). */
 static void __attribute__((noinline)) dscmCartReadPartial(u32 blockBase, u8* dst, u32 off, u32 n, u32 cmdFlags) {
 	u32 block[0x200 / sizeof(u32)] __attribute__((aligned(4)));
+	int oldIME = enterCriticalSection();
 	dscmCardParamCommand(CARD_CMD_DATA_READ, blockBase, cmdFlags, block, 0x200 / sizeof(u32));
+	leaveCriticalSection(oldIME);
 	memcpy(dst, (u8*)block + off, n);
 }
 
@@ -70,7 +73,14 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 	while (len > 0) {
 		u32 off = src & 0x1FFu;
 		if (off == 0 && len >= 0x200u) {
+			// Run each 0x200 card command with IRQs off, exactly as the
+			// bootloader did: the proven read ran at IME=0, so no VBlank/IPC
+			// IRQ can preempt a transfer mid-word or raise a spurious card IRQ.
+			// Per-block (not whole-read) so the VBlank RA streamer still runs
+			// between blocks.
+			int oldIME = enterCriticalSection();
 			dscmCardParamCommand(CARD_CMD_DATA_READ, src, cmdFlags, (u32*)dst, 0x200 / sizeof(u32));
+			leaveCriticalSection(oldIME);
 			dst += 0x200; src += 0x200; len -= 0x200;
 		} else {
 			u32 n = 0x200u - off;
