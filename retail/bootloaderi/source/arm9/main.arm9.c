@@ -301,7 +301,19 @@ void arm9_main(void) {
 
 	// Set ARM9 state to ready and wait for it to change again
 	arm9_stateFlag = ARM9_READY;
+	bool brandShown = false;   // DScheevos/Cheevotron loading screen revealed once
 	while (arm9_stateFlag != ARM9_BOOTBIN) {
+		// Cheevotron (stream) mode shows no placard, so the screens would stay
+		// at the boot white fade for the whole load. Once the session is loaded
+		// and says stream, fade in the brand-colour screens filled above.
+		if (!brandShown
+		 && *(u32*)DSCHEEVOS_SESSION == DSCHEEVOS_SESSION_MAGIC
+		 && (*(u8*)(DSCHEEVOS_SESSION + DSCHEEVOS_S_FLAGS) & DSCHEEVOS_BOOT_STREAM)) {
+			brandShown = true;
+			fadeIn(BIT(0) | BIT(1));
+			topScreenFadedIn = true;
+			bottomScreenFadedIn = true;
+		}
 		if (placardFrames > 0) {
 			placardTick();
 		}
