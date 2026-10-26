@@ -321,11 +321,24 @@ static void driveInitialize(void) {
 		savFile.firstCluster = CLUSTER_FREE;
 	}*/
 
-	#ifdef DEBUG		
+	// Cheevotron cart-read diagnostic: the resident engine is built without
+	// DEBUG, so its dbg_printf is a no-op. Point it at a dedicated SD file so
+	// the few one-shot cart-read markers below reach the card. CARTDBG.LOG must
+	// already exist on the SD (pre-created large enough).
+	{
+		static aFile dscmDbgFile;
+		getBootFileCluster(&dscmDbgFile, "CARTDBG.LOG", 0, !(valueBits & b_dsiSD));
+		if (dscmDbgFile.firstCluster != CLUSTER_FREE) {
+			enableDebug(&dscmDbgFile);
+			dbg_printf("DSCM diag log ready\n");
+		}
+	}
+
+	#ifdef DEBUG
 	aFile myDebugFile;
 	getBootFileCluster(&myDebugFile, "NDSBTSRP.LOG", 0, !(valueBits & b_dsiSD));
 	enableDebug(&myDebugFile);
-	dbg_printf("logging initialized\n");		
+	dbg_printf("logging initialized\n");
 	dbg_printf("sdk version :");
 	dbg_hexa(moduleParams->sdk_version);		
 	dbg_printf("\n");	
@@ -1856,7 +1869,35 @@ void runCardEngineCheckHalt(void) {
 				if (lockMutex(&saveMutex)) {
 					cardReadLED(true, dmaLed);    // When a file is loading, turn on LED for card read indicator
 					if ((valueBits & cartMode) && !useApFixOverlays) {
-						dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
+						// Cheevotron: one-shot capture of the first gameplay cart
+						// read. Logs pre-state, reads the same block from the SD
+						// dump for comparison, runs the live cart read, then logs
+						// whether it returned, the final ROMCTRL, and cart vs SD
+						// data. Decides hang (spin timed out) vs garbage (cmp != 0)
+						// vs good-data-dies-later (cmp == 0, returned).
+						static bool dscmDiagOnce = true;
+						if (dscmDiagOnce) {
+							dscmDiagOnce = false;
+							u32 sdblk[0x200 / sizeof(u32)];
+							extern volatile u32 dscmLastRomctrl, dscmSpinTimedOut;
+							dbg_printf("DSCM read1 src="); dbg_hexa(src);
+							dbg_printf(" len="); dbg_hexa(len);
+							dbg_printf(" dst="); dbg_hexa(dst);
+							dbg_printf(" exmem="); dbg_hexa(*(vu16*)0x04000204);
+							dbg_printf(" romctrl="); dbg_hexa(REG_ROMCTRL);
+							dbg_printf(" flags="); dbg_hexa(DSCM_CART_PORTFLAGS);
+							dbg_printf("\n");
+							fileRead((char*)sdblk, romFile, src, 0x200);
+							dbg_printf("DSCM sd="); dbg_hexa(sdblk[0]); dbg_hexa(sdblk[1]); dbg_printf("\n");
+							dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
+							dbg_printf("DSCM done timedout="); dbg_hexa(dscmSpinTimedOut);
+							dbg_printf(" lastromctrl="); dbg_hexa(dscmLastRomctrl);
+							dbg_printf(" cart="); dbg_hexa(((u32*)dst)[0]); dbg_hexa(((u32*)dst)[1]);
+							dbg_printf(" cmp="); dbg_hexa((u32)memcmp((void*)dst, sdblk, 0x200));
+							dbg_printf("\n");
+						} else {
+							dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
+						}
 					} else {
 						fileRead((char*)dst, useApFixOverlays ? apFixOverlaysFile : romFile, src, len);
 					}

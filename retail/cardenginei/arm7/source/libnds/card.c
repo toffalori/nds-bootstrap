@@ -23,18 +23,27 @@ static void dscmCardWriteCommand(const u8* command) {
 	}
 }
 
+// Diagnostic: last ROMCTRL seen when a transfer ended, and whether the spin
+// bailed on the guard rather than on BUSY clearing. Lets a stuck CARD_BUSY be
+// logged instead of freezing the console forever.
+volatile u32 dscmLastRomctrl = 0;
+volatile u32 dscmSpinTimedOut = 0;
+
 static void dscmCardPolledTransfer(u32 flags, u32* destination, u32 length, const u8* command) {
 	u32 data;
 	dscmCardWriteCommand(command);
 	REG_ROMCTRL = flags;
 	u32* target = destination + length;
+	u32 guard = 0x1000000;
 	do {
 		if (REG_ROMCTRL & CARD_DATA_READY) {
 			data = REG_CARD_DATA_RD;
 			if (destination != NULL && destination < target)
 				*destination++ = data;
 		}
-	} while (REG_ROMCTRL & CARD_BUSY);
+	} while ((REG_ROMCTRL & CARD_BUSY) && --guard);
+	dscmLastRomctrl = REG_ROMCTRL;
+	if (guard == 0) dscmSpinTimedOut = 1;
 }
 
 static void dscmCardParamCommand(u8 command, u32 parameter, u32 flags, u32* destination, u32 length) {
