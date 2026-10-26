@@ -306,15 +306,30 @@ void arm9_main(void) {
 	// fades in over this).
 	SetBrightness(0, -31);
 	SetBrightness(1, -31);
+	bool brandTopSetup = false;
 	while (arm9_stateFlag != ARM9_BOOTBIN) {
-		// Cheevotron (stream) mode shows no placard. The top screen is MODE_FB0 on
-		// VRAM_A, which the loader keeps scribbling over all through the load, so
-		// hold it black every frame; the bottom (sub BG on VRAM_H/I, filled above)
-		// is untouched, so show it at normal brightness for the brand colour.
+		// Cheevotron (stream) mode shows no placard. The top default (MODE_FB0 on
+		// VRAM_A) is the loader's scratch, so move the top's brand screen onto a
+		// dedicated BG bitmap in VRAM_E (which the loader never touches), the same
+		// way the bottom uses the sub BG on VRAM_H/I. Then both stay the brand
+		// colour, stable, for the whole load.
 		if (*(u32*)DSCHEEVOS_SESSION == DSCHEEVOS_SESSION_MAGIC
 		 && (*(u8*)(DSCHEEVOS_SESSION + DSCHEEVOS_S_FLAGS) & DSCHEEVOS_BOOT_STREAM)) {
-			SetBrightness(0, -31);
+			if (!brandTopSetup) {
+				brandTopSetup = true;
+				VRAM_E_CR = VRAM_ENABLE | VRAM_E_MAIN_BG;   // map E to main BG @ 0x06000000
+				BG_PALETTE[1] = RGB15(2, 3, 9);
+				dmaFill9(0x01010101, (void*)0x06000000, 0x10000);  // 256x256 8bpp, index 1
+				REG_BG3PA = 0x0100;
+				REG_BG3PB = 0;
+				REG_BG3PC = 0;
+				REG_BG3PD = 0x0100;
+				REG_BG3CNT = (u16)BgSize_B8_256x256;
+				REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
+			}
+			SetBrightness(0, 0);
 			SetBrightness(1, 0);
+			topScreenFadedIn = true;
 			bottomScreenFadedIn = true;
 		}
 		if (placardFrames > 0) {
