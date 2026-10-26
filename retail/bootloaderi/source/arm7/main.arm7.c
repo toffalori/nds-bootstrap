@@ -2374,9 +2374,12 @@ int arm7_main(void) {
 
 		if (!bootstrapOnFlashcard && !gameOnFlashcard && !saveOnFlashcard && REG_SCFG_EXT != 0 && !(REG_SCFG_MC & BIT(0))) {
 			if (dscheevosCartMode) {
-				// Cart mode keeps Slot-1 powered: the game is the real cartridge,
-				// and its cloneboot/ARM9 card accesses must reach live hardware.
-				my_enableSlot1();
+				// Cart mode: dscmCartInit already left Slot-1 powered and in KEY2
+				// main-data mode. Do NOT call my_enableSlot1 here. Its bare
+				// REG_ROMCTRL = 0x20000000 write (no seed re-apply, no SEC bits)
+				// clears the controller's KEY2 engine, so the game's first
+				// encrypted read gets open-bus 0xFF. Leave the card exactly as the
+				// handshake left it.
 			} else if (specialCard || saveRelocation == FALSE) {
 				// Enable Slot-1 for games that use IR
 				my_enableSlot1();
