@@ -1961,8 +1961,8 @@ static u8 dscheevosNtrSelected = 0;
 // the SD is free, and this is the same fileWrite the save system uses. One run
 // then shows whether the shim polls, sends frames (tx), hears the chip (rx), or
 // the chip is dead. NETDIAG.TXT must already exist on the SD, padded >= 256 B.
-static aFile dscmNetdiagFile;
-static u8 dscmNetdiagReady = 0;   // 0 unresolved, 1 ok, 2 failed to resolve
+// No new .bss: the cardengine's .bss is a tiny VRAM region. Resolve a stack-local
+// aFile each call and keep the heartbeat in .data.
 static char* dscmHex8(char* p, u32 v) {
 	static const char H[] = "0123456789ABCDEF";
 	int i;
@@ -1970,15 +1970,13 @@ static char* dscmHex8(char* p, u32 v) {
 	return p;
 }
 static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
-	static u32 dscmHb = 0;
+	static u32 dscmHb __attribute__((section(".data"))) = 0;
+	aFile f = {0};
 	char b[256];
 	char* p = b;
 	dscmHb++;
-	if (dscmNetdiagReady == 0) {
-		getBootFileCluster(&dscmNetdiagFile, "NETDIAG.TXT", false);   // TWOCARD: boolCard2=false (main SD)
-		dscmNetdiagReady = dscmNetdiagFile.firstCluster ? 1 : 2;
-	}
-	if (dscmNetdiagReady != 1) return;
+	getBootFileCluster(&f, "NETDIAG.TXT", false);   // TWOCARD: boolCard2=false (main SD)
+	if (!f.firstCluster) return;
 #define DSCM_PUTS(s) do { const char* _s=(s); while(*_s) *p++=*_s++; } while(0)
 #define DSCM_PUTH(label,v) do { DSCM_PUTS(label); p=dscmHex8(p,(u32)(v)); } while(0)
 	DSCM_PUTH("hb=",dscmHb);
@@ -1988,7 +1986,7 @@ static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
 		DSCM_PUTS(" ring=NULL mag="); p = dscmHex8(p, ring ? ring->magic : 0);
 		DSCM_PUTH(" gw=",gw); DSCM_PUTH(" pc2=",pc2); DSCM_PUTH(" pus=",pus);
 		DSCM_PUTS("\n                                \n");
-		fileWrite(b, &dscmNetdiagFile, 0, (u32)(p - b));
+		fileWrite(b, &f, 0, (u32)(p - b));
 		return;
 	}
 	DSCM_PUTH(" gw=",gw); DSCM_PUTH(" pc2=",pc2); DSCM_PUTH(" pus=",pus);
@@ -2002,7 +2000,7 @@ static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
 	DSCM_PUTS("\n                                \n");   // pad so a shorter write never leaves stale bytes
 #undef DSCM_PUTS
 #undef DSCM_PUTH
-	fileWrite(b, &dscmNetdiagFile, 0, (u32)(p - b));
+	fileWrite(b, &f, 0, (u32)(p - b));
 }
 
 // The game is using its own (DS-mode) wireless once the DS Wi-Fi is
@@ -2015,7 +2013,7 @@ static void dscheevosNetPoll(const u16 powcnt2, const u16 powerUs, const bool ga
 	// is captured. In CART mode the cart read uses the cart bus and this SD write
 	// the SD bus, so they don't conflict.
 	{
-		static u32 dscmNetDiag = 0;
+		static u32 dscmNetDiag __attribute__((section(".data"))) = 0;
 		if ((dscmNetDiag++ & 0x7F) == 0) {
 			dscmNetdiagWrite(ring, powcnt2, powerUs, gameWifi);
 		}
