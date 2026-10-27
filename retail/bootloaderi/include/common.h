@@ -70,6 +70,7 @@ extern u32* arm9executeAddress;
 extern bool arm9_supportsDSiMode;
 extern bool dsiModeConfirmed;
 extern bool arm9_boostVram;
+extern volatile bool arm9_holdWhite;
 extern u32 arm9_SCFG_EXT;
 extern u16 arm9_SCFG_CLK;
 extern volatile bool esrbScreenPrepared;

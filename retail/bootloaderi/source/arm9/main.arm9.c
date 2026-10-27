@@ -57,6 +57,11 @@ bool arm9_supportsDSiMode = false;
 bool dsiModeConfirmed = false;
 static bool colorLutEnabled = false;
 bool arm9_boostVram = false;
+// Cheevotron: hold both screens white while loading, so the start goes from the
+// launcher's Cheevotron screen through white (the loaders) straight to the game,
+// with no brand screen in between. White until the ARM7 knows the session is no
+// Cheevotron stream session (then the DScheevos brand screen shows).
+volatile bool arm9_holdWhite = true;
 u32 arm9_SCFG_EXT = 0;
 u16 arm9_SCFG_CLK = 0;
 volatile bool esrbScreenPrepared = false;
@@ -314,8 +319,8 @@ void arm9_main(void) {
 		REG_BG3CNT = (u16)BgSize_B8_256x256;
 		REG_DISPCNT_SUB = MODE_3_2D | DISPLAY_BG3_ACTIVE;
 		REG_BG3CNT_SUB = (u16)BgSize_B8_256x256;
-		SetBrightness(0, 0);
-		SetBrightness(1, 0);
+		SetBrightness(0, arm9_holdWhite ? 31 : 0);
+		SetBrightness(1, arm9_holdWhite ? 31 : 0);
 		topScreenFadedIn = true;
 		bottomScreenFadedIn = true;
 		if (placardFrames > 0) {
@@ -333,7 +338,9 @@ void arm9_main(void) {
 				if (bottomScreenFadedIn) {
 					screens |= BIT(1);
 				}
-				fadeOut(screens);
+				if (!arm9_holdWhite) {   // white already: a fade would flash the screens' content
+					fadeOut(screens);
+				}
 				dmaFill9(0, BG_PALETTE, 2*1024);
 				dmaFill9(0, VRAM_A, 0x18000);		// Bank A
 				dmaFill9(0, BG_GFX_SUB, 0xC000);		// Bank H-I

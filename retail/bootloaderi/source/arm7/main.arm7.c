@@ -83,6 +83,7 @@ extern bool dscheevosHardcore(void);
 extern void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* ndsHeader);
 extern void dscheevosStamp(const char* what);
 extern bool dscheevosBootFromCart(void);            // dscheevos_hooks.c
+extern bool dscheevosStream(void);                  // dscheevos_hooks.c
 extern int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID);   // dscheevos_cardboot.c
 extern void dscmCartRead(u32 src, u32* dest, size_t size);
 bool dscheevosCartMode = false;                     // boot the inserted Slot-1 cart, not the SD ROM
@@ -1866,6 +1867,7 @@ int arm7_main(void) {
 
 	//bool dsiModeConfirmed;
 	dscheevosCartMode = dscheevosBootFromCart();
+	arm9_holdWhite = dscheevosStream();   // Cheevotron: white until the game (main.arm9.c)
 	if (dscheevosCartMode) {
 		loadBinary_ARM7_cart(&dsiHeaderTemp, romFile);
 	} else {
