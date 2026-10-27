@@ -892,6 +892,7 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp, aFile* romFile) {
 		dscmCartRead((u32)h->arm9romOffset, (u32*)h->arm9destination, h->arm9binarySize);
 	}
 	dscmCartRead((u32)h->arm7romOffset, (u32*)h->arm7destination, h->arm7binarySize);
+	dscheevosStamp("cart binaries read");
 	// Diagnostics. The SD dump stores the 0x4000-0x8000 secure area ENCRYPTED, so
 	// compare the cartridge against the SD dump in MAIN DATA (file >= 0x8000),
 	// which is plain in both: this tests the DATA_READ path. Separately log the
@@ -2562,6 +2563,7 @@ int arm7_main(void) {
 			dscheevosTrimPreload(ndsHeader, moduleParams, laterSdk, usesCloneboot);
 		}
 
+		dscheevosStamp("patching");
 		errorCode = patchCardNds(
 			(cardengineArm7*)ce7Location,
 			(cardengineArm9*)ce9Location,
@@ -2642,6 +2644,7 @@ int arm7_main(void) {
 			consoleModel,
 			usesCloneboot
 		);
+		dscheevosStamp("patched");
 
 		patchOffsetCacheFileNewCrc = swiCRC16(0xFFFF, &patchOffsetCache, sizeof(patchOffsetCacheContents));
 		if (patchOffsetCacheFileNewCrc != patchOffsetCacheFilePrevCrc) {
@@ -2661,6 +2664,7 @@ int arm7_main(void) {
 		} else if ((ROMsupportsDsiMode(ndsHeader) && !isDSiWare) || strncmp(romTid, "UBR", 3) != 0) {
 			loadOverlaysintoRAM(ndsHeader, moduleParams, romFile);
 		}
+		dscheevosStamp("overlays loaded");
 
 		if ((ROMsupportsDsiMode(ndsHeader) || isSdk5(moduleParams)) && usesCloneboot) {
 			fileRead((char*)((ROMsupportsDsiMode(ndsHeader) && dsiModeConfirmed) ? 0x02FFDC00 : 0x027FFEC0), romFile, clonebootOffset, 0x88); // Pre-load RSA key
@@ -2702,6 +2706,7 @@ int arm7_main(void) {
 			// }
 
 			dbg_printf("Overlays cached to a file\n");
+			dscheevosStamp("overlays cached");
 		}
 
 		if (!ROMinRAM && ((ROMsupportsDsiMode(ndsHeader) && !isDSiWare && (!dsiModeConfirmed || consoleModel > 0)) || !ROMsupportsDsiMode(ndsHeader))) {
@@ -2714,6 +2719,7 @@ int arm7_main(void) {
 
 		if (!ROMinRAM && dsiWramAccess && !dsiWramMirrored && (!ROMsupportsDsiMode(ndsHeader) || !dsiModeConfirmed)) {
 			loadNitroFileInfoIntoRAM(ndsHeader, romFile);
+			dscheevosStamp("nitro file info loaded");
 		}
 
 		// DScheevos: after the ROM, overlay and preload loads above, which use the
@@ -2746,6 +2752,7 @@ int arm7_main(void) {
 				fileWrite((char*)&iUncompressedSizei, &pageFile, 0x5FFFF8, sizeof(u32));
 				fileWrite((char*)&newArm7ibinarySize, &pageFile, 0x5FFFFC, sizeof(u32));
 			}
+			dscheevosStamp("page file written");
 		} /* else {
 			*(u32*)ARM9_DEC_SIZE_LOCATION = iUncompressedSize;
 			tonccpy((char*)ndsHeader->arm9destination+0x400000, ndsHeader->arm9destination, iUncompressedSize);
@@ -2772,8 +2779,10 @@ int arm7_main(void) {
 
 	i2cReadRegister(0x4A, 0x10);	// Clear accidential POWER button press
 
+	dscheevosStamp("screens cleared");
 	arm9_stateFlag = ARM9_SETSCFG;
 	while (arm9_stateFlag != ARM9_READY) {};
+	dscheevosStamp("SCFG set");
 
 	{
 		aFile pageFile;

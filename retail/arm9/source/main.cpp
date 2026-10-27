@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <limits.h> // PATH_MAX
+#include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <nds.h>
@@ -162,6 +163,8 @@ static void getSFCG_ARM7(void) {
 void dscheevosStage1Log(const char* mode, const char* fmt, ...) {
 	FILE* f = fopen(DSCHEEVOS_STAGE1_LOG, mode);
 	if (!f) return;
+	const unsigned long s = (unsigned long)(time(NULL) % 86400);	// console clock, to line up with launcher.log
+	fprintf(f, "%02lu:%02lu:%02lu ", s / 3600, s / 60 % 60, s % 60);
 	va_list ap;
 	va_start(ap, fmt);
 	vfprintf(f, fmt, ap);
@@ -629,6 +632,9 @@ static int runNdsFile(configuration* conf) {
 		}
 	}
 
+	if (isDSiMode()) {
+		dscheevosStage1Log("a", "stage1: starting the bootloader");
+	}
 	return runNds(st.st_ino, clusterSav, clusterDonor, /* clusterGba, clusterGbaSav, */ clusterQuit, clusterWideCheat, clusterApPatch, clusterApPatchPostCardRead, clusterDSi2DSSave, clusterCheat, clusterPatchOffsetCache, clusterRamDump, clusterSrParams, clusterScreenshot, apFixOverlaysCluster, musicCluster, clusterPageFile, clusterManual, clusterTwlFont, conf);
 }
 

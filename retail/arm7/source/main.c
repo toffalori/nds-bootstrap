@@ -57,6 +57,14 @@ void my_sdmmc_get_cid(int devicenumber, u32 *cid);
 
 void VcountHandler(void) {
 	inputGetAndSend();
+	// DScheevos: the eMMC CID request (nand/nandio.c) can come while main() is
+	// still before its FIFO_USER_05 answer, when the ARM9 mounts the NAND to
+	// read TWLCFG; main() would only see it after that answer, so both CPUs
+	// waited for ever. Answer it here as well, as TWiLight Menu++'s ARM7 does.
+	if (*(vu32*)0x2FFFD0C == 0x454D4D43) {
+		my_sdmmc_get_cid(true, (u32*)0x2FFD7BC);	// Get eMMC CID
+		*(vu32*)0x2FFFD0C = 0;
+	}
 }
 
 void set_ctr(u32* ctr){
