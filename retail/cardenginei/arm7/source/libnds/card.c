@@ -91,11 +91,11 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 	// desync KEY2 (the first block decoded, the rest came back 0xFF).
 	int oldIME = enterCriticalSection();
 #ifndef TWLSDK
-	// The game's ARM7 boot reset the card out of KEY2, so rebuild the session
-	// once, before the first gameplay read on any path.
-	static bool dscmKey2Ready __attribute__((section(".data"))) = false;
-	if (!dscmKey2Ready && len >= 0x2000u) {   // need dst as handshake scratch
-		dscmKey2Ready = true;
+	// KEY2 desyncs between reads (something touches the card in the gap), so for
+	// now rebuild the session before EVERY read. Correct but slow; optimise once
+	// confirmed. Needs dst (>= 0x1C00 bytes) as handshake scratch, then the read
+	// overwrites it.
+	if (len >= 0x2000u) {
 		dscmCartReinit((u32*)dst);
 	}
 #endif
