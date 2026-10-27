@@ -1973,7 +1973,7 @@ static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
 	char b[256];
 	char* p = b;
 	if (dscmNetdiagReady == 0) {
-		getBootFileCluster(&dscmNetdiagFile, "NETDIAG.TXT", 0, !(valueBits & b_dsiSD));
+		getBootFileCluster(&dscmNetdiagFile, "NETDIAG.TXT", false);   // TWOCARD: boolCard2=false (main SD)
 		dscmNetdiagReady = dscmNetdiagFile.firstCluster ? 1 : 2;
 	}
 	if (dscmNetdiagReady != 1) return;
