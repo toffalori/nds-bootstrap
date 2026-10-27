@@ -1956,6 +1956,43 @@ static u8 dscheevosLedNow = 0;
 static u8 dscheevosNetAttached = 0;
 static u8 dscheevosNtrSelected = 0;
 
+// DScheevos stream diagnostics: snapshot the shim/net state to sd:/NETDIAG.TXT
+// (overwrite at offset 0). Safe in CART mode: gameplay reads the cartridge, so
+// the SD is free, and this is the same fileWrite the save system uses. One run
+// then shows whether the shim polls, sends frames (tx), hears the chip (rx), or
+// the chip is dead. NETDIAG.TXT must already exist on the SD, padded >= 256 B.
+static aFile dscmNetdiagFile;
+static u8 dscmNetdiagReady = 0;   // 0 unresolved, 1 ok, 2 failed to resolve
+static char* dscmHex8(char* p, u32 v) {
+	static const char H[] = "0123456789ABCDEF";
+	int i;
+	for (i = 28; i >= 0; i -= 4) *p++ = H[(v >> i) & 0xF];
+	return p;
+}
+static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
+	char b[256];
+	char* p = b;
+	if (dscmNetdiagReady == 0) {
+		getBootFileCluster(&dscmNetdiagFile, "NETDIAG.TXT", 0, !(valueBits & b_dsiSD));
+		dscmNetdiagReady = dscmNetdiagFile.firstCluster ? 1 : 2;
+	}
+	if (dscmNetdiagReady != 1) return;
+#define DSCM_PUTS(s) do { const char* _s=(s); while(*_s) *p++=*_s++; } while(0)
+#define DSCM_PUTH(label,v) do { DSCM_PUTS(label); p=dscmHex8(p,(u32)(v)); } while(0)
+	DSCM_PUTH("gw=",gw); DSCM_PUTH(" pc2=",pc2); DSCM_PUTH(" pus=",pus);
+	DSCM_PUTH(" run=",ring->run); DSCM_PUTH(" att=",ring->attached); DSCM_PUTH(" dead=",ring->dead);
+	DSCM_PUTS("\n");
+	DSCM_PUTH("txh=",ring->tx_head); DSCM_PUTH(" txt=",ring->tx_tail);
+	DSCM_PUTH(" polls=",ring->stats.polls); DSCM_PUTH(" tx=",ring->stats.tx_frames); DSCM_PUTH(" rx=",ring->stats.rx_frames);
+	DSCM_PUTS("\n");
+	DSCM_PUTH("pNtr=",ring->stats.paused_ntr_wifi); DSCM_PUTH(" pRd=",ring->stats.paused_card_read);
+	DSCM_PUTH(" sdErr=",ring->stats.sdio_errors); DSCM_PUTH(" lErr=",ring->stats.last_error); DSCM_PUTH(" iSt=",ring->stats.last_int_status);
+	DSCM_PUTS("\n                                \n");   // pad so a shorter write never leaves stale bytes
+#undef DSCM_PUTS
+#undef DSCM_PUTH
+	fileWrite(b, &dscmNetdiagFile, 0, (u32)(p - b));
+}
+
 // The game is using its own (DS-mode) wireless once the DS Wi-Fi is
 // powered (POWCNT2 bit 1; many games set it at boot without using it)
 // and its RF clock is on (W_POWER_US bit 0 = 0).
@@ -1964,30 +2001,12 @@ static void dscheevosNetPoll(const u16 powcnt2, const u16 powerUs, const bool ga
 	if (!ring || ring->magic != SHIM_MAGIC) {
 		return;
 	}
-	// DScheevos stream diagnostics: dump the net/shim state to NDSBTSRP.LOG
-	// about once every ~4 s, so a cart/stream run that won't reach the phone
-	// shows whether the shim is paused (gameWifi false positive or a card read),
-	// whether it polls at all, and whether frames reach the chip.
+	// Snapshot the shim/net state to sd:/NETDIAG.TXT about once every ~4 s, only
+	// when no cartridge read is in flight (CART mode: the SD is otherwise free).
 	{
 		static u32 dscmNetDiag = 0;
-		if ((dscmNetDiag++ & 0xFF) == 0) {
-			dbg_printf("net gw="); dbg_hexa(gameWifi);
-			dbg_printf(" pc2="); dbg_hexa(powcnt2);
-			dbg_printf(" pus="); dbg_hexa(powerUs);
-			dbg_printf("\n run="); dbg_hexa(ring->run);
-			dbg_printf(" att="); dbg_hexa(ring->attached);
-			dbg_printf(" dead="); dbg_hexa(ring->dead);
-			dbg_printf(" txh="); dbg_hexa(ring->tx_head);
-			dbg_printf(" txt="); dbg_hexa(ring->tx_tail);
-			dbg_printf("\n polls="); dbg_hexa(ring->stats.polls);
-			dbg_printf(" tx="); dbg_hexa(ring->stats.tx_frames);
-			dbg_printf(" rx="); dbg_hexa(ring->stats.rx_frames);
-			dbg_printf(" pNtr="); dbg_hexa(ring->stats.paused_ntr_wifi);
-			dbg_printf(" pRd="); dbg_hexa(ring->stats.paused_card_read);
-			dbg_printf("\n sdErr="); dbg_hexa(ring->stats.sdio_errors);
-			dbg_printf(" lastErr="); dbg_hexa(ring->stats.last_error);
-			dbg_printf(" intSt="); dbg_hexa(ring->stats.last_int_status);
-			dbg_printf("\n");
+		if (!readOngoing && (dscmNetDiag++ & 0xFF) == 0) {
+			dscmNetdiagWrite(ring, powcnt2, powerUs, gameWifi);
 		}
 	}
 	// While the game's wireless is on, select DS-mode Wi-Fi (GPIO_WIFI bit 8)
