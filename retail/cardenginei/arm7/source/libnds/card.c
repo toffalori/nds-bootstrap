@@ -30,6 +30,10 @@ static void dscmCardWriteCommand(const u8* command) {
 volatile u32 dscmLastRomctrl __attribute__((section(".data"))) = 0;
 volatile u32 dscmSpinTimedOut __attribute__((section(".data"))) = 0;
 
+#ifndef TWLSDK
+int dscmCartReinit(void);   // defined below
+#endif
+
 static void dscmCardPolledTransfer(u32 flags, u32* destination, u32 length, const u8* command) {
 	u32 data;
 	dscmCardWriteCommand(command);
@@ -79,6 +83,18 @@ static void __attribute__((noinline)) dscmCartReadPartial(u32 blockBase, u8* dst
  * mirrors the secure area (<0x8000) to 0x8000+(addr&0x1FF) itself. dst must be
  * word-aligned, as the game's cache buffers and the reload targets are. */
 void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
+#ifndef TWLSDK
+	// The game's ARM7 boot reset the card out of KEY2, so rebuild the session
+	// once, before the first gameplay read on any path. IRQs off: it issues many
+	// card commands that must not be preempted.
+	static bool dscmKey2Ready = false;
+	if (!dscmKey2Ready) {
+		dscmKey2Ready = true;
+		int oldIME = enterCriticalSection();
+		dscmCartReinit();
+		leaveCriticalSection(oldIME);
+	}
+#endif
 	const u32 cmdFlags = (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(1);
 	while (len > 0) {
 		u32 off = src & 0x1FFu;
@@ -100,3 +116,321 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 		}
 	}
 }
+
+/* ------------------------------------------------------------------------- *
+ * Cheevotron KEY2 re-handshake (NTR engine only).
+ *
+ * The game's own ARM7 boot code resets the Slot-1 card after the bootloader
+ * hands off, so by the first gameplay read the card is no longer in the KEY2
+ * main-data session the bootloader established, and encrypted reads return
+ * open-bus 0xFF. The resident engine cannot re-seed KEY2 in main-data mode, so
+ * it redoes the full KEY1 handshake once (card reset -> KEY1 -> secure -> data
+ * mode), exactly as the bootloader did, then serves reads from the synced card.
+ *
+ * Ported from dscheevos_cardboot.c (NitroHax read_card.c / encryption.c, GPL-3)
+ * with three gameplay adaptations: the Blowfish table / header / secure buffers
+ * are in .data (the engine .bss is a tiny VRAM region), cardDelay uses swiDelay
+ * (the game owns the hardware timers), and the secure area is read to discard.
+ * ------------------------------------------------------------------------- */
+#ifndef TWLSDK
+
+#include <nds/bios.h>
+
+extern void dscmReadBios(u8* dest, u32 src, u32 size);
+extern u32 dbg_printf(const char* message);
+extern u32 dbg_hexa(u32 n);
+
+#ifndef REG_SCFG_ROM
+#define REG_SCFG_ROM (*(vu16*)0x04004000)
+#endif
+#ifndef REG_SCFG_MC
+#define REG_SCFG_MC  (*(vu16*)0x04004010)
+#endif
+
+#define KEYSIZE 0x1048
+
+/* All in .data: the engine .bss is a tiny VRAM region. */
+static u32 dscmKeycode[3] __attribute__((section(".data")));
+static u32 dscmKeybuf[KEYSIZE / sizeof(u32)] __attribute__((section(".data")));
+static u32 dscmSecure[0x200] __attribute__((section(".data")));   /* first 0x800 bytes kept for the decrypt check */
+static u32 dscmDiscard[0x200 / sizeof(u32)] __attribute__((section(".data")));
+static tNDSHeader dscmHdr __attribute__((section(".data")));
+#define keybuf dscmKeybuf
+#define keycode dscmKeycode
+
+static void crypt_64bit_up(u32* ptr) {
+	u32 x = ptr[1];
+	u32 y = ptr[0];
+	u32 z;
+	int i;
+	for (i = 0; i < 0x10; i++) {
+		z = keybuf[i] ^ x;
+		x = keybuf[0x012 + ((z >> 24) & 0xff)];
+		x = keybuf[0x112 + ((z >> 16) & 0xff)] + x;
+		x = keybuf[0x212 + ((z >> 8) & 0xff)] ^ x;
+		x = keybuf[0x312 + ((z >> 0) & 0xff)] + x;
+		x = y ^ x;
+		y = z;
+	}
+	ptr[0] = x ^ keybuf[0x10];
+	ptr[1] = y ^ keybuf[0x11];
+}
+
+static void crypt_64bit_down(u32* ptr) {
+	u32 x = ptr[1];
+	u32 y = ptr[0];
+	u32 z;
+	int i;
+	for (i = 0x11; i > 0x01; i--) {
+		z = keybuf[i] ^ x;
+		x = keybuf[0x012 + ((z >> 24) & 0xff)];
+		x = keybuf[0x112 + ((z >> 16) & 0xff)] + x;
+		x = keybuf[0x212 + ((z >> 8) & 0xff)] ^ x;
+		x = keybuf[0x312 + ((z >> 0) & 0xff)] + x;
+		x = y ^ x;
+		y = z;
+	}
+	ptr[0] = x ^ keybuf[0x01];
+	ptr[1] = y ^ keybuf[0x00];
+}
+
+static u32 bswap_32bit(u32 in) {
+	u8 a = (u8)((in >> 0) & 0xff);
+	u8 b = (u8)((in >> 8) & 0xff);
+	u8 c = (u8)((in >> 16) & 0xff);
+	u8 d = (u8)((in >> 24) & 0xff);
+	return (u32)((a << 24) | (b << 16) | (c << 8) | (d << 0));
+}
+
+static void apply_keycode(u32 modulo) {
+	u32 scratch[2];
+	int i;
+	modulo = modulo / sizeof(*keycode);
+	crypt_64bit_up(&keycode[1]);
+	crypt_64bit_up(&keycode[0]);
+	memset(scratch, 0, 8);
+	for (i = 0; i < 0x12; i += 1)
+		keybuf[i] = keybuf[i] ^ bswap_32bit(keycode[i % modulo]);
+	for (i = 0; i < 0x412; i += 2) {
+		crypt_64bit_up(scratch);
+		keybuf[i] = scratch[1];
+		keybuf[i + 1] = scratch[0];
+	}
+}
+
+static void init_keycode(u32 idcode, u32 level, u32 modulo) {
+	dscmReadBios((u8*)keybuf, 0x30, KEYSIZE);
+	keycode[0] = idcode;
+	keycode[1] = idcode / 2;
+	keycode[2] = idcode * 2;
+	if (level >= 1) apply_keycode(modulo);
+	if (level >= 2) apply_keycode(modulo);
+	keycode[1] = keycode[1] * 2;
+	keycode[2] = keycode[2] / 2;
+	if (level >= 3) apply_keycode(modulo);
+}
+
+typedef union { char title[4]; u32 key; } GameCode;
+
+static const u8 cardSeedBytes[] = { 0xE8, 0x4D, 0x5A, 0xB1, 0x17, 0x8F, 0x99, 0xD5 };
+
+static u32 getRandomNumber(void) { return 4; }
+
+static void decryptSecureArea(u32 gameCode, u32* secureArea) {
+	int i;
+	init_keycode(gameCode, 2, 8);
+	crypt_64bit_down(secureArea);
+	init_keycode(gameCode, 3, 8);
+	for (i = 0; i < 0x200; i += 2)
+		crypt_64bit_down(secureArea + i);
+}
+
+static struct { unsigned int iii, jjj, kkkkk, llll, mmm, nnn; } key1data;
+
+static void initKey1Encryption(u8* cmdData) {
+	key1data.iii = getRandomNumber() & 0x00000fff;
+	key1data.jjj = getRandomNumber() & 0x00000fff;
+	key1data.kkkkk = getRandomNumber() & 0x000fffff;
+	key1data.llll = getRandomNumber() & 0x0000ffff;
+	key1data.mmm = getRandomNumber() & 0x00000fff;
+	key1data.nnn = getRandomNumber() & 0x00000fff;
+	cmdData[7] = CARD_CMD_ACTIVATE_BF;
+	cmdData[6] = (u8)(key1data.iii >> 4);
+	cmdData[5] = (u8)((key1data.iii << 4) | (key1data.jjj >> 8));
+	cmdData[4] = (u8)key1data.jjj;
+	cmdData[3] = (u8)(key1data.kkkkk >> 16);
+	cmdData[2] = (u8)(key1data.kkkkk >> 8);
+	cmdData[1] = (u8)key1data.kkkkk;
+	cmdData[0] = (u8)getRandomNumber();
+}
+
+static void createEncryptedCommand(u8 command, u8* cmdData, u32 block) {
+	unsigned long iii, jjj;
+	if (command != CARD_CMD_SECURE_READ)
+		block = key1data.llll;
+	if (command == CARD_CMD_ACTIVATE_SEC) {
+		iii = key1data.mmm;
+		jjj = key1data.nnn;
+	} else {
+		iii = key1data.iii;
+		jjj = key1data.jjj;
+	}
+	cmdData[7] = (u8)(command | (block >> 12));
+	cmdData[6] = (u8)(block >> 4);
+	cmdData[5] = (u8)((block << 4) | (iii >> 8));
+	cmdData[4] = (u8)iii;
+	cmdData[3] = (u8)(jjj >> 4);
+	cmdData[2] = (u8)((jjj << 4) | (key1data.kkkkk >> 16));
+	cmdData[1] = (u8)(key1data.kkkkk >> 8);
+	cmdData[0] = (u8)key1data.kkkkk;
+	crypt_64bit_up((u32*)cmdData);
+	key1data.kkkkk += 1;
+}
+
+/* The game owns the hardware timers, so the bootloader's TIMER0 cardDelay would
+ * corrupt game timing. swiDelay is a BIOS busy-wait and touches no timer. */
+static void dscmCardDelay(u16 readTimeout) {
+	swiDelay((((u32)readTimeout & 0x3FFF) + 8) * 32);
+}
+
+/* A raw-mode card reset (libnds cardReset), so KEY1 (0x3C) is accepted next. */
+static void dscmCardReset(void) {
+	const u8 cmdData[8] = { 0, 0, 0, 0, 0, 0, 0, CARD_CMD_DUMMY };
+	u32 read = 0;
+	dscmCardWriteCommand(cmdData);
+	REG_ROMCTRL = CARD_ACTIVATE | CARD_nRESET | CARD_CLK_SLOW | CARD_BLK_SIZE(5) | CARD_DELAY2(0x18);
+	do {
+		if (REG_ROMCTRL & CARD_DATA_READY) {
+			if (read < 0x2000) { u32 data = REG_CARD_DATA_RD; (void)data; read += 4; }
+		}
+	} while (REG_ROMCTRL & CARD_BUSY);
+}
+
+/* Re-run the full KEY1 handshake and leave the card in KEY2 main-data mode.
+ * Returns 0 on success. Runs with IRQs already off (caller holds the critical
+ * section). Mirrors loadBinary_ARM7_cart's NTR_BIOS -> enableSlot1 -> cardReset
+ * -> dscmCartInit sequence. The secure area is read only to advance the
+ * protocol; just the first 0x800 bytes are kept, for the encrObj decrypt check. */
+int dscmCartReinit(void) {
+	tNDSHeader* ndsHeader = &dscmHdr;
+	u32 portFlagsKey1, portFlagsSecRead;
+	bool normalChip;
+	u32* secureArea;
+	int secureBlockNumber;
+	u32 kept;
+	int i;
+	u32 chipID = 0;
+	u8 cmdData[8] __attribute__((aligned(4)));
+	GameCode* gameCode;
+
+	/* NTR-mode BIOS, so the dscmReadBios gadget targets the NTR ARM7 BIOS. */
+	REG_SCFG_ROM = 0x703;
+
+	/* Power/ready the slot (no-op if already powered), then a raw reset. */
+	if (!(REG_SCFG_MC & 0x0c)) {
+		REG_SCFG_MC = (REG_SCFG_MC & ~0x0c) | 4; swiDelay(0x2000);
+		REG_SCFG_MC = (REG_SCFG_MC & ~0x0c) | 8; swiDelay(0x2000);
+	}
+	REG_AUXSPICNT = CARD_CR1_ENABLE | CARD_CR1_IRQ;
+	REG_ROMCTRL = 0x20000000;
+	dscmCardReset();
+
+	dscmCardParamCommand(CARD_CMD_DUMMY, 0,
+		CARD_ACTIVATE | CARD_nRESET | CARD_CLK_SLOW | CARD_BLK_SIZE(1) | CARD_DELAY1(0x1FFF) | CARD_DELAY2(0x3F),
+		NULL, 0);
+
+	dscmCardParamCommand(CARD_CMD_HEADER_READ, 0,
+		CARD_ACTIVATE | CARD_nRESET | CARD_CLK_SLOW | CARD_BLK_SIZE(1) | CARD_DELAY1(0x1FFF) | CARD_DELAY2(0x3F),
+		(u32*)ndsHeader, sizeof(tNDSHeader) / sizeof(u32));
+
+	dbg_printf("DSCM reinit hdrcrc="); dbg_hexa(ndsHeader->headerCRC16); dbg_printf("\n");
+	if (ndsHeader->headerCRC16 != swiCRC16(0xFFFF, (void*)ndsHeader, 0x15E))
+		return 1;
+	if (ndsHeader->logoCRC16 != 0xCF56)
+		return 2;
+
+	gameCode = (GameCode*)ndsHeader->gameCode;
+	init_keycode(gameCode->key, 2, 8);
+
+	portFlagsKey1 = CARD_ACTIVATE | CARD_nRESET | (ndsHeader->cardControl13 & (CARD_WR | CARD_CLK_SLOW)) |
+		((ndsHeader->cardControlBF & (CARD_CLK_SLOW | CARD_DELAY1(0x1FFF))) + ((ndsHeader->cardControlBF & CARD_DELAY2(0x3F)) >> 16));
+
+	dscmCardParamCommand(CARD_CMD_HEADER_CHIPID, 0,
+		(ndsHeader->cardControl13 & (CARD_WR | CARD_nRESET | CARD_CLK_SLOW)) | CARD_ACTIVATE | CARD_BLK_SIZE(7),
+		&chipID, sizeof(u32) / sizeof(u32));
+
+	normalChip = ((chipID) & 0x80000000) != 0;
+	if (!normalChip)
+		portFlagsKey1 |= CARD_SEC_LARGE;
+
+	initKey1Encryption(cmdData);
+	dscmCardPolledTransfer((ndsHeader->cardControl13 & (CARD_WR | CARD_nRESET | CARD_CLK_SLOW)) | CARD_ACTIVATE, NULL, 0, cmdData);
+
+	createEncryptedCommand(CARD_CMD_ACTIVATE_SEC, cmdData, 0);
+	if (normalChip) {
+		dscmCardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+		dscmCardDelay(ndsHeader->readTimeout);
+		dscmCardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+	} else {
+		dscmCardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+	}
+
+	REG_ROMCTRL = 0;
+	REG_CARD_1B0 = cardSeedBytes[ndsHeader->deviceType & 0x07] | (key1data.nnn << 15) | (key1data.mmm << 27) | 0x6000;
+	REG_CARD_1B4 = 0x879b9b05;
+	REG_CARD_1B8 = key1data.mmm >> 5;
+	REG_CARD_1BA = 0x5c;
+	REG_ROMCTRL = CARD_nRESET | CARD_SEC_SEED | CARD_SEC_EN | CARD_SEC_DAT;
+
+	portFlagsKey1 |= CARD_SEC_EN | CARD_SEC_DAT;
+
+	createEncryptedCommand(CARD_CMD_SECURE_CHIPID, cmdData, 0);
+	if (normalChip) {
+		dscmCardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+		dscmCardDelay(ndsHeader->readTimeout);
+		dscmCardPolledTransfer(portFlagsKey1 | CARD_BLK_SIZE(7), NULL, 0, cmdData);
+	} else {
+		dscmCardPolledTransfer(portFlagsKey1 | CARD_BLK_SIZE(7), NULL, 0, cmdData);
+	}
+
+	portFlagsSecRead = (ndsHeader->cardControlBF & (CARD_CLK_SLOW | CARD_DELAY1(0x1FFF) | CARD_DELAY2(0x3F)))
+		| CARD_ACTIVATE | CARD_nRESET | CARD_SEC_EN | CARD_SEC_DAT;
+
+	secureArea = dscmSecure;
+	kept = 0;
+	for (secureBlockNumber = 4; secureBlockNumber < 8; secureBlockNumber++) {
+		createEncryptedCommand(CARD_CMD_SECURE_READ, cmdData, secureBlockNumber);
+		if (normalChip) {
+			dscmCardPolledTransfer(portFlagsSecRead, NULL, 0, cmdData);
+			dscmCardDelay(ndsHeader->readTimeout);
+			for (i = 8; i > 0; i--) {
+				/* Keep the first 0x800 bytes (for the decrypt check); discard the
+				 * rest, but still clock every transfer to advance the protocol. */
+				u32* dest = (kept < 0x200) ? (secureArea + kept) : dscmDiscard;
+				dscmCardPolledTransfer(portFlagsSecRead | CARD_BLK_SIZE(1), dest, 0x200 / sizeof(u32), cmdData);
+				if (kept < 0x200) kept += 0x200 / sizeof(u32);
+			}
+		} else {
+			/* Large secure read (0x1000) once per block; keep only the first. */
+			u32* dest = (secureBlockNumber == 4) ? secureArea : dscmDiscard;
+			dscmCardPolledTransfer(portFlagsSecRead | CARD_BLK_SIZE(4) | CARD_SEC_LARGE, dest, 0x1000 / sizeof(u32), cmdData);
+		}
+	}
+
+	createEncryptedCommand(CARD_CMD_DATA_MODE, cmdData, 0);
+	if (normalChip) {
+		dscmCardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+		dscmCardDelay(ndsHeader->readTimeout);
+		dscmCardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+	} else {
+		dscmCardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+	}
+
+	decryptSecureArea(gameCode->key, dscmSecure);
+	dbg_printf("DSCM reinit chipID="); dbg_hexa(chipID);
+	dbg_printf(" sec="); dbg_hexa(dscmSecure[0]); dbg_hexa(dscmSecure[1]);
+	dbg_printf((dscmSecure[0] == 0x72636e65 && dscmSecure[1] == 0x6a624f79) ? " encryObj\n" : " BADSEC\n");
+
+	return 0;
+}
+#endif
