@@ -114,12 +114,11 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 			dbg_printf(" exm="); dbg_hexa(*(volatile u16*)0x04000204);
 			dbg_printf("\n");
 		}
-		// Re-handshake on the first read, and afterwards only if the probe shows
-		// the card fell out of KEY2. With the ARM9 MI_SetCardProcessor stub the
-		// card should stay alive, so later reads skip the handshake (full speed).
-		static bool dscmReady __attribute__((section(".data"))) = false;
-		if (!dscmReady || probeId != 0x00000FC2u) {
-			dscmReady = true;
+		// Re-handshake ONLY if the card fell out of KEY2. With the ARM9
+		// MI_SetCardProcessor stub it stays alive (probe reads the chip ID), so
+		// normally we never handshake and just read at full speed. Resetting an
+		// already-live card (what the old first-read handshake did) breaks it.
+		if (probeId != 0x00000FC2u) {
 			int tries = 12;
 			while (dscmCartReinit((u32*)dst) != 0 && --tries) { }
 		}
