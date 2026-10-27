@@ -39,9 +39,16 @@ redistribute it freely, subject to the following restrictions:
 #include <nds/arm7/clock.h>
 #include <nds/arm7/i2c.h>
 #include <nds/debug.h>
+#include <nds/ipc.h>
 
 #include "hex.h"
 #include "fifocheck.h"
+
+// DScheevos: how far main() got, for the ARM9 to log if this ARM7 never
+// answers (IPC_SYNC output bits, read by the ARM9 as its input bits).
+static void dscheevosStep(u16 step) {
+	REG_IPC_SYNC = (REG_IPC_SYNC & IPC_SYNC_IRQ_ENABLE) | (step << 8);
+}
 
 //static vu32* wordCommandAddr;
 
@@ -86,6 +93,7 @@ void myFIFOValue32Handler(u32 value, void* userdata) {
 }
 
 int main(void) {
+	dscheevosStep(1);
 	*(u16*)0x02FFFC30 = *(vu16*)0x4004700; // SNDEXCNT (Used for checking for regular DS or DSi/3DS in DS mode)
 
 	// Grab from DS header in GBA slot
@@ -115,6 +123,7 @@ int main(void) {
 
 	irqEnable(IRQ_VBLANK | IRQ_VCOUNT);
 
+	dscheevosStep(2);
 	if (isDSiMode()) {
 		i2cWriteRegister(I2C_PM, I2CREGPM_MMCPWR, 0);		// Press power button for auto-reset
 		//i2cWriteRegister(I2C_PM, I2CREGPM_MMCPWR, 1);		// Have IRQ check for power button press
@@ -149,7 +158,8 @@ int main(void) {
 		u8 iv[16]={0};
 		u8 *scratch=(u8*)0x02074200; 
 		u8 *key3=(u8*)0x40044D0;
-		
+
+		dscheevosStep(3);	// waits on the AES unit, which needs its SCFG_CLK7 clock
 		aes(in, base, iv, 2);
 
 		//write consecutive 0-255 values to any byte in key3 until we get the same aes output as "base" above - this reveals the hidden byte. this way we can uncover all 16 bytes of the key3 normalkey pretty easily.
@@ -167,10 +177,12 @@ int main(void) {
 		}
 	}
 
+	dscheevosStep(4);
 	swiIntrWait(0, IRQ_FIFO_NOT_EMPTY);
 
 	SCFGFifoCheck();
 
+	dscheevosStep(0);
 	fifoSendValue32(FIFO_USER_05, 1);
 
 	fifoSetValue32Handler(FIFO_USER_01, myFIFOValue32Handler, NULL);

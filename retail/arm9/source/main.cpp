@@ -154,6 +154,37 @@ static void getSFCG_ARM7(void) {
 	fifoSendValue32(FIFO_USER_01, (u32)&REG_SCFG_EXT);
 }
 
+// DScheevos: the first stage's own log, for starts that hang before
+// NDSBTSRP.LOG is created (the DSi Menu leaves the ARM7 without some SCFG
+// clocks/access TWiLight Menu++ turns on).
+#define DSCHEEVOS_STAGE1_LOG "sd:/_nds/dscheevos/stage1.log"
+
+static void dscheevosStage1Log(const char* mode, const char* fmt, ...) {
+	FILE* f = fopen(DSCHEEVOS_STAGE1_LOG, mode);
+	if (!f) return;
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(f, fmt, ap);
+	va_end(ap);
+	fputc('\n', f);
+	fclose(f);
+}
+
+// fifoWaitValue32(FIFO_USER_05), but logs where the ARM7 is if it takes
+// longer than 5 s. Counts frames from VCOUNT: no IRQ is needed.
+static void dscheevosWaitArm7(void) {
+	for (int frames = 0; !fifoCheckValue32(FIFO_USER_05); ) {
+		if (REG_VCOUNT == 191) {
+			while (REG_VCOUNT == 191);
+			if (++frames == 300) {
+				dscheevosStage1Log("a", "stage1: no answer from the ARM7 after 5 s, step %d",
+					REG_IPC_SYNC & 0xF);
+			}
+		}
+	}
+	dscheevosStage1Log("a", "stage1: ARM7 answered");
+}
+
 static void myFIFOValue32Handler(u32 value, void* userdata) {
 	nocashMessage("myFIFOValue32Handler\n");
 	iprintf("ARM7 data %lX\n", value);
@@ -379,8 +410,16 @@ static int runNdsFile(configuration* conf) {
 		}
 	}
 
+	if (isDSiMode()) {
+		dscheevosStage1Log("w", "stage1: scfg9 ext=%08lX clk=%04X, arm7 ext at start=%08lX, arm7 step %d",
+			REG_SCFG_EXT, REG_SCFG_CLK, REG_SCFG_EXT7, REG_IPC_SYNC & 0xF);
+	}
 	fifoSendValue32(FIFO_USER_03, 1);
-	fifoWaitValue32(FIFO_USER_05);
+	if (isDSiMode()) {
+		dscheevosWaitArm7();
+	} else {
+		fifoWaitValue32(FIFO_USER_05);
+	}
 
 	// Logging
 	const char *logFilePath = (conf->sdFound && !conf->b4dsMode ? "sd:/NDSBTSRP.LOG" : "fat:/NDSBTSRP.LOG");
