@@ -31,7 +31,7 @@ volatile u32 dscmLastRomctrl __attribute__((section(".data"))) = 0;
 volatile u32 dscmSpinTimedOut __attribute__((section(".data"))) = 0;
 
 #ifndef TWLSDK
-int dscmCartReinit(void);   // defined below
+int dscmCartReinit(u32* scratch);   // defined below; scratch >= 0x1C00 bytes
 #endif
 
 static void dscmCardPolledTransfer(u32 flags, u32* destination, u32 length, const u8* command) {
@@ -89,10 +89,10 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 	// card commands that must not be preempted. In .data: the engine .bss is a
 	// tiny VRAM region with no spare room.
 	static bool dscmKey2Ready __attribute__((section(".data"))) = false;
-	if (!dscmKey2Ready) {
+	if (!dscmKey2Ready && len >= 0x2000u) {   // need dst as handshake scratch
 		dscmKey2Ready = true;
 		int oldIME = enterCriticalSection();
-		dscmCartReinit();
+		dscmCartReinit((u32*)dst);
 		leaveCriticalSection(oldIME);
 	}
 #endif
@@ -150,13 +150,13 @@ extern u32 dbg_hexa(u32 n);
 
 #define KEYSIZE 0x1048
 
-/* All in .data: the engine .bss is a tiny VRAM region. */
+/* The big handshake buffers (Blowfish table 0x1048, kept secure 0x800, discard
+ * 0x200, header 0x160 ~= 0x1BA8 total) do NOT fit in the engine's static image:
+ * .data and .bss share one tiny region. They are carved from the first read's
+ * destination buffer instead (0x4000, free until the read runs). Only these two
+ * tiny state vars stay static. */
 static u32 dscmKeycode[3] __attribute__((section(".data")));
-static u32 dscmKeybuf[KEYSIZE / sizeof(u32)] __attribute__((section(".data")));
-static u32 dscmSecure[0x200] __attribute__((section(".data")));   /* first 0x800 bytes kept for the decrypt check */
-static u32 dscmDiscard[0x200 / sizeof(u32)] __attribute__((section(".data")));
-static tNDSHeader dscmHdr __attribute__((section(".data")));
-#define keybuf dscmKeybuf
+static u32* keybuf;   /* -> scratch; set at the top of dscmCartReinit */
 #define keycode dscmKeycode
 
 static void crypt_64bit_up(u32* ptr) {
@@ -312,17 +312,26 @@ static void dscmCardReset(void) {
  * section). Mirrors loadBinary_ARM7_cart's NTR_BIOS -> enableSlot1 -> cardReset
  * -> dscmCartInit sequence. The secure area is read only to advance the
  * protocol; just the first 0x800 bytes are kept, for the encrObj decrypt check. */
-int dscmCartReinit(void) {
-	tNDSHeader* ndsHeader = &dscmHdr;
+int dscmCartReinit(u32* scratch) {
+	/* Carve the handshake buffers out of the caller's scratch (the first read's
+	 * dst, >= 0x1C00 bytes). keybuf (0x1048) and the kept secure area (0x800) do
+	 * not overlap, so decryptSecureArea can rebuild keybuf while reading secure. */
+	tNDSHeader* ndsHeader;
+	u32* secureArea;
+	u32* discard;
 	u32 portFlagsKey1, portFlagsSecRead;
 	bool normalChip;
-	u32* secureArea;
 	int secureBlockNumber;
 	u32 kept;
 	int i;
 	u32 chipID = 0;
 	u8 cmdData[8] __attribute__((aligned(4)));
 	GameCode* gameCode;
+
+	keybuf     = scratch;                               /* 0x1048 bytes */
+	secureArea = scratch + (0x1048 / sizeof(u32));      /* 0x800 bytes  */
+	discard    = scratch + ((0x1048 + 0x800) / sizeof(u32));   /* 0x200 bytes */
+	ndsHeader  = (tNDSHeader*)(scratch + ((0x1048 + 0x800 + 0x200) / sizeof(u32))); /* 0x160 */
 
 	/* NTR-mode BIOS, so the dscmReadBios gadget targets the NTR ARM7 BIOS. */
 	REG_SCFG_ROM = 0x703;
@@ -397,7 +406,6 @@ int dscmCartReinit(void) {
 	portFlagsSecRead = (ndsHeader->cardControlBF & (CARD_CLK_SLOW | CARD_DELAY1(0x1FFF) | CARD_DELAY2(0x3F)))
 		| CARD_ACTIVATE | CARD_nRESET | CARD_SEC_EN | CARD_SEC_DAT;
 
-	secureArea = dscmSecure;
 	kept = 0;
 	for (secureBlockNumber = 4; secureBlockNumber < 8; secureBlockNumber++) {
 		createEncryptedCommand(CARD_CMD_SECURE_READ, cmdData, secureBlockNumber);
@@ -407,13 +415,13 @@ int dscmCartReinit(void) {
 			for (i = 8; i > 0; i--) {
 				/* Keep the first 0x800 bytes (for the decrypt check); discard the
 				 * rest, but still clock every transfer to advance the protocol. */
-				u32* dest = (kept < 0x200) ? (secureArea + kept) : dscmDiscard;
+				u32* dest = (kept < 0x200) ? (secureArea + kept) : discard;
 				dscmCardPolledTransfer(portFlagsSecRead | CARD_BLK_SIZE(1), dest, 0x200 / sizeof(u32), cmdData);
 				if (kept < 0x200) kept += 0x200 / sizeof(u32);
 			}
 		} else {
 			/* Large secure read (0x1000) once per block; keep only the first. */
-			u32* dest = (secureBlockNumber == 4) ? secureArea : dscmDiscard;
+			u32* dest = (secureBlockNumber == 4) ? secureArea : discard;
 			dscmCardPolledTransfer(portFlagsSecRead | CARD_BLK_SIZE(4) | CARD_SEC_LARGE, dest, 0x1000 / sizeof(u32), cmdData);
 		}
 	}
@@ -427,10 +435,10 @@ int dscmCartReinit(void) {
 		dscmCardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
 	}
 
-	decryptSecureArea(gameCode->key, dscmSecure);
+	decryptSecureArea(gameCode->key, secureArea);
 	dbg_printf("DSCM reinit chipID="); dbg_hexa(chipID);
-	dbg_printf(" sec="); dbg_hexa(dscmSecure[0]); dbg_hexa(dscmSecure[1]);
-	dbg_printf((dscmSecure[0] == 0x72636e65 && dscmSecure[1] == 0x6a624f79) ? " encryObj\n" : " BADSEC\n");
+	dbg_printf(" sec="); dbg_hexa(secureArea[0]); dbg_hexa(secureArea[1]);
+	dbg_printf((secureArea[0] == 0x72636e65 && secureArea[1] == 0x6a624f79) ? " encryObj\n" : " BADSEC\n");
 
 	return 0;
 }
