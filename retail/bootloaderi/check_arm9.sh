@@ -24,8 +24,10 @@ $objdump -d -j .arm9 "$elf" | awk -v start="$start" -v end="$end" '
 	function pad(x) { while (length(x) < 8) x = "0" x; return tolower(x) }
 	BEGIN { start = pad(start); end = pad(end) }
 	# A long-branch veneer jumps through a register: its target is out of reach.
-	# (The __x_from_thumb interworking stubs are fine: their "b" is checked below.)
-	/_veneer>:/ {
+	# ld names its long thumb-to-ARM stub __x_from_thumb too, like the short one,
+	# but that one loads pc from a literal ("ldr pc, [pc, #-4]"). The short
+	# __x_from_thumb stubs end in a "b", checked below.
+	/_veneer>:/ || /\tldr\tpc, \[pc, #-4\]/ {
 		print "check_arm9: far-call stub in the ARM9 code: " $0
 		bad = 1
 	}

@@ -366,8 +366,8 @@ void arm9_main(void) {
 			if (arm9_holdWhite != whiteShown) {
 				whiteShown = arm9_holdWhite;
 				const u32 fill = whiteShown ? 0 : 0x01010101;   // white, or the brand colour
-				dmaFill9(fill, (void*)0x06000000, 0x10000);
-				dmaFill9(fill, BG_GFX_SUB, 0x10000);
+				dmaFill9(fill, (void*)0x06000000, 0x10000);   // VRAM_E, 64 KB
+				dmaFill9(fill, BG_GFX_SUB, 0xC000);           // VRAM_H+I, 48 KB
 				if (!whiteShown) {   // not a Cheevotron session: the DScheevos brand screen
 					BG_PALETTE[0] = BG_PALETTE_SUB[0] = 0;
 					BG_PALETTE[1] = BG_PALETTE_SUB[1] = RGB15(2, 3, 9);
