@@ -1970,8 +1970,10 @@ static char* dscmHex8(char* p, u32 v) {
 	return p;
 }
 static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
+	static u32 dscmHb = 0;
 	char b[256];
 	char* p = b;
+	dscmHb++;
 	if (dscmNetdiagReady == 0) {
 		getBootFileCluster(&dscmNetdiagFile, "NETDIAG.TXT", false);   // TWOCARD: boolCard2=false (main SD)
 		dscmNetdiagReady = dscmNetdiagFile.firstCluster ? 1 : 2;
@@ -1979,7 +1981,17 @@ static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
 	if (dscmNetdiagReady != 1) return;
 #define DSCM_PUTS(s) do { const char* _s=(s); while(*_s) *p++=*_s++; } while(0)
 #define DSCM_PUTH(label,v) do { DSCM_PUTS(label); p=dscmHex8(p,(u32)(v)); } while(0)
-	DSCM_PUTH("gw=",gw); DSCM_PUTH(" pc2=",pc2); DSCM_PUTH(" pus=",pus);
+	DSCM_PUTH("hb=",dscmHb);
+	if (!ring || ring->magic != SHIM_MAGIC) {
+		// Ring not published: the module never set up the net ring (net_init did
+		// not run, or net_valid was 0). The shim never runs, so no HELLO.
+		DSCM_PUTS(" ring=NULL mag="); p = dscmHex8(p, ring ? ring->magic : 0);
+		DSCM_PUTH(" gw=",gw); DSCM_PUTH(" pc2=",pc2); DSCM_PUTH(" pus=",pus);
+		DSCM_PUTS("\n                                \n");
+		fileWrite(b, &dscmNetdiagFile, 0, (u32)(p - b));
+		return;
+	}
+	DSCM_PUTH(" gw=",gw); DSCM_PUTH(" pc2=",pc2); DSCM_PUTH(" pus=",pus);
 	DSCM_PUTH(" run=",ring->run); DSCM_PUTH(" att=",ring->attached); DSCM_PUTH(" dead=",ring->dead);
 	DSCM_PUTS("\n");
 	DSCM_PUTH("txh=",ring->tx_head); DSCM_PUTH(" txt=",ring->tx_tail);
@@ -1998,16 +2010,18 @@ static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
 // and its RF clock is on (W_POWER_US bit 0 = 0).
 static void dscheevosNetPoll(const u16 powcnt2, const u16 powerUs, const bool gameWifi) {
 	shim_shared_t* ring = *(shim_shared_t* volatile*)(DSCHEEVOS_LOCATION + DSCHEEVOS_H_NETRING);
-	if (!ring || ring->magic != SHIM_MAGIC) {
-		return;
-	}
-	// Snapshot the shim/net state to sd:/NETDIAG.TXT about once every ~4 s, only
-	// when no cartridge read is in flight (CART mode: the SD is otherwise free).
+	// Snapshot the shim/net state to sd:/NETDIAG.TXT about every ~2 s, BEFORE the
+	// ring-null return and with no readOngoing gate, so even "ring never published"
+	// is captured. In CART mode the cart read uses the cart bus and this SD write
+	// the SD bus, so they don't conflict.
 	{
 		static u32 dscmNetDiag = 0;
-		if (!readOngoing && (dscmNetDiag++ & 0xFF) == 0) {
+		if ((dscmNetDiag++ & 0x7F) == 0) {
 			dscmNetdiagWrite(ring, powcnt2, powerUs, gameWifi);
 		}
+	}
+	if (!ring || ring->magic != SHIM_MAGIC) {
+		return;
 	}
 	// While the game's wireless is on, select DS-mode Wi-Fi (GPIO_WIFI bit 8)
 	// and leave the DSi chip alone until it's off.
