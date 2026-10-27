@@ -1860,14 +1860,6 @@ int arm7_main(void) {
 	dscheevosCartMode = dscheevosBootFromCart();
 	if (dscheevosCartMode) {
 		loadBinary_ARM7_cart(&dsiHeaderTemp, romFile);
-		{
-			// Probe A: is KEY2 still alive right after the cart binaries load?
-			u32 dscmProbe[0x200 / sizeof(u32)];
-			dscmCartRead(0x001E8000, dscmProbe, 0x200);
-			dbg_printf("DSCM probeA 1e8000=");
-			dbg_hexa(dscmProbe[0]);
-			dbg_printf("\n");
-		}
 	} else {
 		loadBinary_ARM7(&dsiHeaderTemp, romFile);
 	}
@@ -2825,16 +2817,6 @@ int arm7_main(void) {
 	}
 
 	dscheevosStamp("game start");
-	if (dscheevosCartMode) {
-		// Probe B: is KEY2 still alive at the very last moment before handoff?
-		// probeA good + probeB 0xFF means a bootloader tail step killed KEY2;
-		// both good means the game's own code kills it after start.
-		u32 dscmProbe[0x200 / sizeof(u32)];
-		dscmCartRead(0x001E8000, dscmProbe, 0x200);
-		dbg_printf("DSCM probeB 1e8000=");
-		dbg_hexa(dscmProbe[0]);
-		dbg_printf("\n");
-	}
 	TIMER_CR(0) = 0;
 	TIMER_CR(1) = 0;
 	TIMER_DATA(0) = 0;

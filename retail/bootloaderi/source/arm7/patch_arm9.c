@@ -3190,9 +3190,6 @@ u32 patchCardNdsArm9(cardengineArm9* ce9, const tNDSHeader* ndsHeader, const mod
 		if (dscheevosBootFromCart()) {
 			static const u32 miSetProcSig[4] = {0xE1D100B0, 0xE3C00B02, 0xE1C100B0, 0xE12FFF1E};
 			u32* miLoc = findOffset((u32*)ndsHeader->arm9destination, ndsHeader->arm9binarySize, miSetProcSig, 4);
-			dbg_printf("DSCM MI_SetCardProcessor ");
-			dbg_hexa((u32)miLoc);
-			dbg_printf("\n");
 			if (miLoc) {
 				miLoc[1] = 0xE3800B02;   // bic r0,r0,#0x800 -> orr r0,r0,#0x800
 			}

@@ -25,17 +25,11 @@ static void dscmCardWriteCommand(const u8* command) {
 	}
 }
 
-// Diagnostic: last ROMCTRL seen when a transfer ended, and whether the spin
-// bailed on the guard rather than on BUSY clearing. Lets a stuck CARD_BUSY be
-// logged instead of freezing the console forever.
-// Forced into .data: the TWL card engine's .bss is a tiny VRAM region.
-volatile u32 dscmLastRomctrl __attribute__((section(".data"))) = 0;
-volatile u32 dscmSpinTimedOut __attribute__((section(".data"))) = 0;
-
 #ifndef TWLSDK
 int dscmCartReinit(u32* scratch);   // defined below; scratch >= 0x1C00 bytes
-extern u32 dbg_printf(const char* message);
-extern u32 dbg_hexa(u32 n);
+// The live cartridge's chip ID, learned from the first read (or a handshake).
+// Used to tell a live KEY2 session (probe returns this) from a dead card.
+static u32 dscmChipId __attribute__((section(".data"))) = 0;
 #endif
 
 static void dscmCardPolledTransfer(u32 flags, u32* destination, u32 length, const u8* command) {
@@ -43,7 +37,7 @@ static void dscmCardPolledTransfer(u32 flags, u32* destination, u32 length, cons
 	dscmCardWriteCommand(command);
 	REG_ROMCTRL = flags;
 	u32* target = destination + length;
-	u32 guard = 0x1000000;
+	u32 guard = 0x1000000;   // bail out instead of hanging if BUSY never clears
 	do {
 		if (REG_ROMCTRL & CARD_DATA_READY) {
 			data = REG_CARD_DATA_RD;
@@ -51,8 +45,6 @@ static void dscmCardPolledTransfer(u32 flags, u32* destination, u32 length, cons
 				*destination++ = data;
 		}
 	} while ((REG_ROMCTRL & CARD_BUSY) && --guard);
-	dscmLastRomctrl = REG_ROMCTRL;
-	if (guard == 0) dscmSpinTimedOut = 1;
 }
 
 static void dscmCardParamCommand(u8 command, u32 parameter, u32 flags, u32* destination, u32 length) {
@@ -95,27 +87,17 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 	// which keeps the sound IRQ fed (no audio crackle).
 	if (len >= 0x2000u) {
 		int oldIME = enterCriticalSection();
-		// Diagnostic: before touching the card, probe KEY2 liveness with a 0xB8
-		// (DATA_CHIPID) and snapshot the slot registers. id==chipID means the card
-		// is still in the KEY2 session (so no reset happened); which register
-		// differs on a dead read names the teardown cause.
+		// Probe KEY2 liveness with a 0xB8 (DATA_CHIPID): the card returns its chip
+		// ID only while the KEY2 session is live. The ARM9 ownership stub keeps it
+		// live, so we learn the ID on the first read and normally never handshake.
 		u32 probeId = 0;
 		dscmCardParamCommand(0xB8, 0, cmdFlags | CARD_BLK_SIZE(7), &probeId, 1);
-		static int dscmProbeN __attribute__((section(".data"))) = 0;
-		if (dscmProbeN < 8) {
-			dscmProbeN++;
-			dbg_printf("DSCM pre id="); dbg_hexa(probeId);
-			dbg_printf(" scfg="); dbg_hexa(*(volatile u16*)0x04004010);
-			dbg_printf(" rom="); dbg_hexa(*(volatile u32*)0x040001A4);
-			dbg_printf(" aux="); dbg_hexa(*(volatile u16*)0x040001A0);
-			dbg_printf(" exm="); dbg_hexa(*(volatile u16*)0x04000204);
-			dbg_printf("\n");
+		if (dscmChipId == 0 && probeId != 0 && probeId != 0xFFFFFFFFu) {
+			dscmChipId = probeId;   // first live read: learn the cartridge's chip ID
 		}
-		// Re-handshake ONLY if the card fell out of KEY2. With the ARM9
-		// MI_SetCardProcessor stub it stays alive (probe reads the chip ID), so
-		// normally we never handshake and just read at full speed. Resetting an
-		// already-live card (what the old first-read handshake did) breaks it.
-		if (probeId != 0x00000FC2u) {
+		// Re-handshake ONLY if the card fell out of KEY2 (probe != chip ID).
+		// Resetting an already-live card breaks it, so never do it when alive.
+		if (dscmChipId == 0 || probeId != dscmChipId) {
 			int tries = 12;
 			while (dscmCartReinit((u32*)dst) != 0 && --tries) { }
 		}
@@ -383,7 +365,6 @@ int dscmCartReinit(u32* scratch) {
 		CARD_ACTIVATE | CARD_nRESET | CARD_CLK_SLOW | CARD_BLK_SIZE(1) | CARD_DELAY1(0x1FFF) | CARD_DELAY2(0x3F),
 		(u32*)ndsHeader, sizeof(tNDSHeader) / sizeof(u32));
 
-	dbg_printf("DSCM reinit hdrcrc="); dbg_hexa(ndsHeader->headerCRC16); dbg_printf("\n");
 	if (ndsHeader->headerCRC16 != swiCRC16(0xFFFF, (void*)ndsHeader, 0x15E))
 		return 1;
 	if (ndsHeader->logoCRC16 != 0xCF56)
@@ -475,8 +456,7 @@ int dscmCartReinit(u32* scratch) {
 	// BIOS reads with IRQs off, so skip it: the gameplay read's cmp==0 already
 	// proves the card is in synced KEY2 data mode.
 	(void)secureArea; (void)discard;
-	dbg_printf("DSCM reinit done chipID="); dbg_hexa(chipID); dbg_printf("\n");
-
+	dscmChipId = chipID;   // record for the liveness probe
 	return 0;
 }
 #endif

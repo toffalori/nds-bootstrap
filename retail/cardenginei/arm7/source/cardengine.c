@@ -321,25 +321,6 @@ static void driveInitialize(void) {
 		savFile.firstCluster = CLUSTER_FREE;
 	}*/
 
-	// Cheevotron cart-read diagnostic: the resident engine is built without
-	// DEBUG, so its dbg_printf is a no-op. Point it at a dedicated SD file so
-	// the few one-shot cart-read markers below reach the card. CARTDBG.LOG must
-	// already exist on the SD (pre-created large enough).
-	// Only in the NTR engine (the one a cart game like SM64DS uses). The TWL
-	// engine's .bss is a tiny VRAM region, and pulling in the FAT-write path
-	// via dbg_printf overflows it.
-	#ifndef TWLSDK
-	{
-		// Stack local, not static: enableDebug() copies it.
-		aFile dscmDbgFile;
-		getBootFileCluster(&dscmDbgFile, "CARTDBG.LOG", !(valueBits & b_dsiSD));
-		if (dscmDbgFile.firstCluster != CLUSTER_FREE) {
-			enableDebug(&dscmDbgFile);
-			dbg_printf("DSCM diag log ready\n");
-		}
-	}
-	#endif
-
 	#ifdef DEBUG
 	aFile myDebugFile;
 	getBootFileCluster(&myDebugFile, "NDSBTSRP.LOG", 0, !(valueBits & b_dsiSD));
@@ -1571,15 +1552,6 @@ static bool start_cardRead_arm9(void) {
 	// Cheevotron cart mode: the ROM is the real Slot-1 cartridge, so read it from
 	// the live card (the AP-fix overlays still come from their SD file).
 	if ((valueBits & cartMode) && !useApFixOverlays) {
-		static bool firstCartRead = true;
-		if (firstCartRead) {
-			firstCartRead = false;
-			dbg_printf("DScheevos: first cart ROM read src=");
-			dbg_hexa(src);
-			dbg_printf(" len=");
-			dbg_hexa(len);
-			dbg_printf("\n");
-		}
 		dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
 		readOngoing = false;
 		cardReadLED(false, isDma);
@@ -1875,33 +1847,7 @@ void runCardEngineCheckHalt(void) {
 				if (lockMutex(&saveMutex)) {
 					cardReadLED(true, dmaLed);    // When a file is loading, turn on LED for card read indicator
 					if ((valueBits & cartMode) && !useApFixOverlays) {
-						// Cheevotron: one-shot capture of the first gameplay cart
-						// read. Logs pre-state, reads the same block from the SD
-						// dump for comparison, runs the live cart read, then logs
-						// whether it returned, the final ROMCTRL, and cart vs SD
-						// data. Decides hang (spin timed out) vs garbage (cmp != 0)
-						// vs good-data-dies-later (cmp == 0, returned).
-						// NTR engine only; the TWL engine cannot afford the log path.
-						#ifndef TWLSDK
-						// Log the first few gameplay reads: does the card stay in
-						// synced KEY2 after the one-shot re-handshake, or re-desync?
-						static int dscmDiagN = 0;
-						if (dscmDiagN < 4) {
-							int n = dscmDiagN++;
-							extern volatile u32 dscmSpinTimedOut;
-							dbg_printf("DSCM r"); dbg_hexa((u32)n);
-							dbg_printf(" src="); dbg_hexa(src);
-							dbg_printf(" len="); dbg_hexa(len);
-							dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
-							dbg_printf(" td="); dbg_hexa(dscmSpinTimedOut);
-							dbg_printf(" cart="); dbg_hexa(((u32*)dst)[0]); dbg_hexa(((u32*)dst)[1]);
-							dbg_printf("\n");
-						} else {
-							dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
-						}
-						#else
 						dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
-						#endif
 					} else {
 						fileRead((char*)dst, useApFixOverlays ? apFixOverlaysFile : romFile, src, len);
 					}
