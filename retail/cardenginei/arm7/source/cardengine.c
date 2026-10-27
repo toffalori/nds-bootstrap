@@ -1964,6 +1964,32 @@ static void dscheevosNetPoll(const u16 powcnt2, const u16 powerUs, const bool ga
 	if (!ring || ring->magic != SHIM_MAGIC) {
 		return;
 	}
+	// DScheevos stream diagnostics: dump the net/shim state to NDSBTSRP.LOG
+	// about once every ~4 s, so a cart/stream run that won't reach the phone
+	// shows whether the shim is paused (gameWifi false positive or a card read),
+	// whether it polls at all, and whether frames reach the chip.
+	{
+		static u32 dscmNetDiag = 0;
+		if ((dscmNetDiag++ & 0xFF) == 0) {
+			dbg_printf("net gw="); dbg_hexa(gameWifi);
+			dbg_printf(" pc2="); dbg_hexa(powcnt2);
+			dbg_printf(" pus="); dbg_hexa(powerUs);
+			dbg_printf("\n run="); dbg_hexa(ring->run);
+			dbg_printf(" att="); dbg_hexa(ring->attached);
+			dbg_printf(" dead="); dbg_hexa(ring->dead);
+			dbg_printf(" txh="); dbg_hexa(ring->tx_head);
+			dbg_printf(" txt="); dbg_hexa(ring->tx_tail);
+			dbg_printf("\n polls="); dbg_hexa(ring->stats.polls);
+			dbg_printf(" tx="); dbg_hexa(ring->stats.tx_frames);
+			dbg_printf(" rx="); dbg_hexa(ring->stats.rx_frames);
+			dbg_printf(" pNtr="); dbg_hexa(ring->stats.paused_ntr_wifi);
+			dbg_printf(" pRd="); dbg_hexa(ring->stats.paused_card_read);
+			dbg_printf("\n sdErr="); dbg_hexa(ring->stats.sdio_errors);
+			dbg_printf(" lastErr="); dbg_hexa(ring->stats.last_error);
+			dbg_printf(" intSt="); dbg_hexa(ring->stats.last_int_status);
+			dbg_printf("\n");
+		}
+	}
 	// While the game's wireless is on, select DS-mode Wi-Fi (GPIO_WIFI bit 8)
 	// and leave the DSi chip alone until it's off.
 	// On DWM-W024 boards the DS Wi-Fi only works with DS mode selected, so a
