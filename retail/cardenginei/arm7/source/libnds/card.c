@@ -34,6 +34,8 @@ volatile u32 dscmSpinTimedOut __attribute__((section(".data"))) = 0;
 
 #ifndef TWLSDK
 int dscmCartReinit(u32* scratch);   // defined below; scratch >= 0x1C00 bytes
+extern u32 dbg_printf(const char* message);
+extern u32 dbg_hexa(u32 n);
 #endif
 
 static void dscmCardPolledTransfer(u32 flags, u32* destination, u32 length, const u8* command) {
@@ -96,8 +98,22 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 	// confirmed. Needs dst (>= 0x1C00 bytes) as handshake scratch, then the read
 	// overwrites it.
 	if (len >= 0x2000u) {
-		// Retry until the handshake's raw header read comes back with the right
-		// CRC; the reset/read is flaky when hammered every read.
+		// Diagnostic: before touching the card, probe KEY2 liveness with a 0xB8
+		// (DATA_CHIPID) and snapshot the slot registers. id==chipID means the card
+		// is still in the KEY2 session (so no reset happened); which register
+		// differs on a dead read names the teardown cause.
+		u32 probeId = 0;
+		dscmCardParamCommand(0xB8, 0, cmdFlags | CARD_BLK_SIZE(7), &probeId, 1);
+		static int dscmProbeN __attribute__((section(".data"))) = 0;
+		if (dscmProbeN < 8) {
+			dscmProbeN++;
+			dbg_printf("DSCM pre id="); dbg_hexa(probeId);
+			dbg_printf(" scfg="); dbg_hexa(*(volatile u16*)0x04004010);
+			dbg_printf(" rom="); dbg_hexa(*(volatile u32*)0x040001A4);
+			dbg_printf(" aux="); dbg_hexa(*(volatile u16*)0x040001A0);
+			dbg_printf(" exm="); dbg_hexa(*(volatile u16*)0x04000204);
+			dbg_printf("\n");
+		}
 		int tries = 12;
 		while (dscmCartReinit((u32*)dst) != 0 && --tries) { }
 	}
