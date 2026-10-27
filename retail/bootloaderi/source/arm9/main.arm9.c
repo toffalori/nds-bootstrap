@@ -171,6 +171,8 @@ static void __attribute__((noinline)) placardTick(void) {
 // so a slow start doesn't look like a hang. Text in the launcher's cyan, dark
 // enough for white, where the launcher's own "Loading..." was. 8x8 glyphs
 // drawn 2x: one 2-pixel run is one 16-bit VRAM write (VRAM takes no bytes).
+// Not in bootloaderi2: its ARM9 code has 4 KB, and only some DSiWare use it.
+#ifndef LOADERTYPE2
 #define LOADING_BG    1   // palette entries
 #define LOADING_INK   2
 #define LOADING_X     48  // 10 glyphs of 16 px, centred
@@ -219,6 +221,7 @@ static void holdLoadingScreen(void) {
 	BG_PALETTE_SUB[0] = BG_PALETTE_SUB[LOADING_BG] = RGB15(31, 31, 31);
 	REG_POWERCNT |= BIT(1);   // 2D engine A: the top screen
 }
+#endif
 
 void waitFrames(int frames) {
 	for (int i = 0; i < frames; i++) {
@@ -365,9 +368,11 @@ void arm9_main(void) {
 	arm9_stateFlag = ARM9_READY;
 	bool whiteShown = false;   // the Cheevotron loading screen is up (arm9_holdWhite)
 	bool screensCleared = false;   // ARM9_SCRNCLR ran: the screens are the game's now
+#ifndef LOADERTYPE2
 	u16 lastVcount = 0;
 	u32 frames = 0;
 	int dotsShown = 0;
+#endif
 	while (arm9_stateFlag != ARM9_BOOTBIN) {
 		// Hold the loading screen every frame: the loader and the module
 		// keep resetting video/brightness during the load, so re-assert the BG3
@@ -378,6 +383,7 @@ void arm9_main(void) {
 			REG_BG3CNT = (u16)BgSize_B8_256x256;
 			REG_DISPCNT_SUB = MODE_3_2D | DISPLAY_BG3_ACTIVE;
 			REG_BG3CNT_SUB = (u16)BgSize_B8_256x256;
+#ifndef LOADERTYPE2
 			if (arm9_holdWhite != whiteShown) {
 				whiteShown = arm9_holdWhite;
 				if (whiteShown) {
@@ -402,6 +408,7 @@ void arm9_main(void) {
 					dotsShown = dots;
 				}
 			}
+#endif
 			SetBrightness(0, 0);
 			SetBrightness(1, 0);
 			topScreenFadedIn = true;
