@@ -1956,70 +1956,11 @@ static u8 dscheevosLedNow = 0;
 static u8 dscheevosNetAttached = 0;
 static u8 dscheevosNtrSelected = 0;
 
-// DScheevos stream diagnostics: snapshot the shim/net state to sd:/NETDIAG.TXT
-// (overwrite at offset 0). Safe in CART mode: gameplay reads the cartridge, so
-// the SD is free, and this is the same fileWrite the save system uses. One run
-// then shows whether the shim polls, sends frames (tx), hears the chip (rx), or
-// the chip is dead. NETDIAG.TXT must already exist on the SD, padded >= 256 B.
-// No new .bss: the cardengine's .bss is a tiny VRAM region. Resolve a stack-local
-// aFile each call and keep the heartbeat in .data.
-static char* dscmHex8(char* p, u32 v) {
-	static const char H[] = "0123456789ABCDEF";
-	int i;
-	for (i = 28; i >= 0; i -= 4) *p++ = H[(v >> i) & 0xF];
-	return p;
-}
-static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
-	static u32 dscmHb __attribute__((section(".data"))) = 0;
-	aFile f = {0};
-	char b[256];
-	char* p = b;
-	dscmHb++;
-	getBootFileCluster(&f, "NETDIAG.TXT", false);   // TWOCARD: boolCard2=false (main SD)
-	if (!f.firstCluster) return;
-#define DSCM_PUTS(s) do { const char* _s=(s); while(*_s) *p++=*_s++; } while(0)
-#define DSCM_PUTH(label,v) do { DSCM_PUTS(label); p=dscmHex8(p,(u32)(v)); } while(0)
-	DSCM_PUTH("hb=",dscmHb);
-	if (!ring || ring->magic != SHIM_MAGIC) {
-		// Ring not published: the module never set up the net ring (net_init did
-		// not run, or net_valid was 0). The shim never runs, so no HELLO.
-		DSCM_PUTS(" ring=NULL mag="); p = dscmHex8(p, ring ? ring->magic : 0);
-		DSCM_PUTH(" gw=",gw); DSCM_PUTH(" pc2=",pc2); DSCM_PUTH(" pus=",pus);
-		DSCM_PUTS("\n                                \n");
-		fileWrite(b, &f, 0, (u32)(p - b));
-		return;
-	}
-	DSCM_PUTH(" gw=",gw); DSCM_PUTH(" pc2=",pc2); DSCM_PUTH(" pus=",pus);
-	DSCM_PUTH(" run=",ring->run); DSCM_PUTH(" att=",ring->attached); DSCM_PUTH(" dead=",ring->dead);
-	DSCM_PUTS("\n");
-	DSCM_PUTH("txh=",ring->tx_head); DSCM_PUTH(" txt=",ring->tx_tail);
-	DSCM_PUTH(" polls=",ring->stats.polls); DSCM_PUTH(" tx=",ring->stats.tx_frames); DSCM_PUTH(" rx=",ring->stats.rx_frames);
-	DSCM_PUTS("\n");
-	DSCM_PUTH("pNtr=",ring->stats.paused_ntr_wifi); DSCM_PUTH(" pRd=",ring->stats.paused_card_read);
-	DSCM_PUTH(" sdErr=",ring->stats.sdio_errors); DSCM_PUTH(" lErr=",ring->stats.last_error); DSCM_PUTH(" iSt=",ring->stats.last_int_status);
-	DSCM_PUTS("\n                                \n");   // pad so a shorter write never leaves stale bytes
-#undef DSCM_PUTS
-#undef DSCM_PUTH
-	fileWrite(b, &f, 0, (u32)(p - b));
-}
-
 // The game is using its own (DS-mode) wireless once the DS Wi-Fi is
 // powered (POWCNT2 bit 1; many games set it at boot without using it)
 // and its RF clock is on (W_POWER_US bit 0 = 0).
 static void dscheevosNetPoll(const u16 powcnt2, const u16 powerUs, const bool gameWifi) {
 	shim_shared_t* ring = *(shim_shared_t* volatile*)(DSCHEEVOS_LOCATION + DSCHEEVOS_H_NETRING);
-	// Snapshot the shim/net state to sd:/NETDIAG.TXT, but only well AFTER boot
-	// (an SD write during the cart's KEY1/KEY2 secure-area reads froze the logo),
-	// and only when no cartridge read is in flight. ~1200 frames ~= 20 s skips
-	// boot + the logo, so the module has long since run module_init/net_init.
-	// This is placed before the ring-null return so "ring never published" shows.
-	{
-		static u32 dscmNetDiag __attribute__((section(".data"))) = 0;
-		dscmNetDiag++;
-		if (dscmNetDiag > 1200 && !readOngoing && (dscmNetDiag & 0x7F) == 0) {
-			dscmNetdiagWrite(ring, powcnt2, powerUs, gameWifi);
-		}
-	}
 	if (!ring || ring->magic != SHIM_MAGIC) {
 		return;
 	}
@@ -2030,15 +1971,13 @@ static void dscheevosNetPoll(const u16 powcnt2, const u16 powerUs, const bool ga
 	// the launcher (real hardware still to be tested).
 	ring->stats.ntr_powcnt2 = powcnt2;
 	ring->stats.ntr_power_us = powerUs;
-	// DIAGNOSTIC (stream pairing): do NOT pause the Atheros shim when gameWifi
-	// reads true. SM64DS and many games power the DS (NTR) Wi-Fi at boot without
-	// using it, and the W_POWER_US read in DSi mode may be a false positive, which
-	// would pause the shim forever and the phone never pairs. Keep counting it so a
-	// real DS-Wi-Fi game still shows up, but keep the DSi chip selected and poll.
-	// Safe for the SM64DS single-player test (no DS local wireless in use).
 	if (gameWifi) {
+		if (!(*(vu16*)0x04004C04 & BIT(8))) {
+			*(vu16*)0x04004C04 |= BIT(8);
+			dscheevosNtrSelected = 1;
+		}
 		ring->stats.paused_ntr_wifi++;
-		// (test build: fall through to shim_poll instead of returning)
+		return;
 	}
 	if (dscheevosNtrSelected) {
 		*(vu16*)0x04004C04 &= ~BIT(8);	// back to the DSi chip

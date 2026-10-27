@@ -29,10 +29,7 @@ static int readSession(const configuration* conf, u32* head, struct stat* stModu
 	if (conf->b4dsMode || conf->bootstrapOnFlashcard || conf->gameOnFlashcard || conf->isDSiWare) {
 		return 0;
 	}
-	if (stat(DSCHEEVOS_DIR "dscheevos9.bin", stModule) < 0 || stat(DSCHEEVOS_DIR "session.bin", stSession) < 0) {
-		return 0;
-	}
-	if (stModule->st_size > DSCHEEVOS_IMAGE_MAX || stSession->st_size > DSCHEEVOS_SESSION_MAX) {
+	if (stat(DSCHEEVOS_DIR "session.bin", stSession) < 0 || stSession->st_size > DSCHEEVOS_SESSION_MAX) {
 		return 0;
 	}
 	FILE* f = fopen(DSCHEEVOS_DIR "session.bin", "rb");
@@ -41,9 +38,23 @@ static int readSession(const configuration* conf, u32* head, struct stat* stModu
 	}
 	const size_t got = fread(head, 1, DSCHEEVOS_SESSION_HEAD, f);
 	fclose(f);
+	if (got != DSCHEEVOS_SESSION_HEAD) {
+		return 0;
+	}
+	// A Cheevotron stream session must run the streamer module
+	// (dscheevos9-stream.bin), which brings up the in-game Wi-Fi to reach the
+	// phone. The on-console build (dscheevos9.bin) keeps the net off unless an
+	// on-console RA session is active (dsc_is_active()), which a stream session,
+	// with no login, never is — so it would never publish the Wi-Fi ring.
+	const char* modulePath = (((const u8*)head)[DSCHEEVOS_S_FLAGS] & DSCHEEVOS_BOOT_STREAM)
+	    ? DSCHEEVOS_DIR "dscheevos9-stream.bin"
+	    : DSCHEEVOS_DIR "dscheevos9.bin";
+	if (stat(modulePath, stModule) < 0 || stModule->st_size > DSCHEEVOS_IMAGE_MAX) {
+		return 0;
+	}
 	const char* romPath = (const char*)head + DSCHEEVOS_S_ROM_PATH;
 	const s32 age = (s32)((u32)time(NULL) - head[DSCHEEVOS_S_UNIX_TIME / 4]);
-	return got == DSCHEEVOS_SESSION_HEAD && head[0] == DSCHEEVOS_SESSION_MAGIC
+	return head[0] == DSCHEEVOS_SESSION_MAGIC
 	 && head[DSCHEEVOS_S_FILE_SIZE / 4] == (u32)stSession->st_size
 	 && strncmp(romPath, conf->ndsPath, 256) == 0
 	 && age >= -DSCHEEVOS_SESSION_MAX_AHEAD && age <= DSCHEEVOS_SESSION_MAX_AGE;
