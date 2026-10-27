@@ -96,7 +96,10 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 	// confirmed. Needs dst (>= 0x1C00 bytes) as handshake scratch, then the read
 	// overwrites it.
 	if (len >= 0x2000u) {
-		dscmCartReinit((u32*)dst);
+		// Retry until the handshake's raw header read comes back with the right
+		// CRC; the reset/read is flaky when hammered every read.
+		int tries = 12;
+		while (dscmCartReinit((u32*)dst) != 0 && --tries) { }
 	}
 #endif
 	while (len > 0) {
@@ -287,7 +290,9 @@ static void createEncryptedCommand(u8 command, u8* cmdData, u32 block) {
 /* The game owns the hardware timers, so the bootloader's TIMER0 cardDelay would
  * corrupt game timing. swiDelay is a BIOS busy-wait and touches no timer. */
 static void dscmCardDelay(u16 readTimeout) {
-	swiDelay((((u32)readTimeout & 0x3FFF) + 8) * 32);
+	/* Generous margin: the KEY1/secure settle delays must not fall short or the
+	 * KEY2 setup lands marginally off and a read decodes to garbage. */
+	swiDelay((((u32)readTimeout & 0x3FFF) + 16) * 128);
 }
 
 /* A raw-mode card reset (libnds cardReset), so KEY1 (0x3C) is accepted next. */
@@ -337,9 +342,11 @@ int dscmCartReinit(u32* scratch) {
 		REG_SCFG_MC = (REG_SCFG_MC & ~0x0c) | 4; swiDelay(0x2000);
 		REG_SCFG_MC = (REG_SCFG_MC & ~0x0c) | 8; swiDelay(0x2000);
 	}
-	REG_AUXSPICNT = CARD_CR1_ENABLE | CARD_CR1_IRQ;
+	REG_AUXSPICNT = CARD_CR1_ENABLE;
 	REG_ROMCTRL = 0x20000000;
+	swiDelay(0x4000);
 	dscmCardReset();
+	swiDelay(0x4000);
 
 	dscmCardParamCommand(CARD_CMD_DUMMY, 0,
 		CARD_ACTIVATE | CARD_nRESET | CARD_CLK_SLOW | CARD_BLK_SIZE(1) | CARD_DELAY1(0x1FFF) | CARD_DELAY2(0x3F),
