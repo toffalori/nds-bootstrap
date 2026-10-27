@@ -17,7 +17,9 @@
 
 static void dscmCardWriteCommand(const u8* command) {
 	int index;
-	REG_AUXSPICNTH = CARD_CR1_ENABLE | CARD_CR1_IRQ;
+	// No CARD_CR1_IRQ: a raised card IRQ, fired between reads while the game's
+	// interrupts are on, lets a handler touch the card and desync KEY2.
+	REG_AUXSPICNTH = CARD_CR1_ENABLE;
 	for (index = 0; index < 8; index++) {
 		REG_CARD_COMMAND[7 - index] = command[index];
 	}
@@ -83,31 +85,24 @@ static void __attribute__((noinline)) dscmCartReadPartial(u32 blockBase, u8* dst
  * mirrors the secure area (<0x8000) to 0x8000+(addr&0x1FF) itself. dst must be
  * word-aligned, as the game's cache buffers and the reload targets are. */
 void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
+	const u32 cmdFlags = (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(1);
+	// The WHOLE read runs with IRQs off, exactly as the proven bootloader read.
+	// Toggling IME between 0x200 blocks let an IRQ touch the card mid-read and
+	// desync KEY2 (the first block decoded, the rest came back 0xFF).
+	int oldIME = enterCriticalSection();
 #ifndef TWLSDK
 	// The game's ARM7 boot reset the card out of KEY2, so rebuild the session
-	// once, before the first gameplay read on any path. IRQs off: it issues many
-	// card commands that must not be preempted. In .data: the engine .bss is a
-	// tiny VRAM region with no spare room.
+	// once, before the first gameplay read on any path.
 	static bool dscmKey2Ready __attribute__((section(".data"))) = false;
 	if (!dscmKey2Ready && len >= 0x2000u) {   // need dst as handshake scratch
 		dscmKey2Ready = true;
-		int oldIME = enterCriticalSection();
 		dscmCartReinit((u32*)dst);
-		leaveCriticalSection(oldIME);
 	}
 #endif
-	const u32 cmdFlags = (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(1);
 	while (len > 0) {
 		u32 off = src & 0x1FFu;
 		if (off == 0 && len >= 0x200u) {
-			// Run each 0x200 card command with IRQs off, exactly as the
-			// bootloader did: the proven read ran at IME=0, so no VBlank/IPC
-			// IRQ can preempt a transfer mid-word or raise a spurious card IRQ.
-			// Per-block (not whole-read) so the VBlank RA streamer still runs
-			// between blocks.
-			int oldIME = enterCriticalSection();
 			dscmCardParamCommand(CARD_CMD_DATA_READ, src, cmdFlags, (u32*)dst, 0x200 / sizeof(u32));
-			leaveCriticalSection(oldIME);
 			dst += 0x200; src += 0x200; len -= 0x200;
 		} else {
 			u32 n = 0x200u - off;
@@ -116,6 +111,7 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 			dst += n; src += n; len -= n;
 		}
 	}
+	leaveCriticalSection(oldIME);
 }
 
 /* ------------------------------------------------------------------------- *
