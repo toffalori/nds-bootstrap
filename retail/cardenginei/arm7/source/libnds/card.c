@@ -88,16 +88,13 @@ static void __attribute__((noinline)) dscmCartReadPartial(u32 blockBase, u8* dst
  * word-aligned, as the game's cache buffers and the reload targets are. */
 void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 	const u32 cmdFlags = (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(1);
-	// The WHOLE read runs with IRQs off, exactly as the proven bootloader read.
-	// Toggling IME between 0x200 blocks let an IRQ touch the card mid-read and
-	// desync KEY2 (the first block decoded, the rest came back 0xFF).
-	int oldIME = enterCriticalSection();
 #ifndef TWLSDK
-	// KEY2 desyncs between reads (something touches the card in the gap), so for
-	// now rebuild the session before EVERY read. Correct but slow; optimise once
-	// confirmed. Needs dst (>= 0x1C00 bytes) as handshake scratch, then the read
-	// overwrites it.
+	// Liveness probe + (only if dead) re-handshake, with IRQs off. The ownership
+	// stub keeps the ARM7 as the card owner, so KEY2 now survives IRQ gaps; the
+	// read loop below can therefore re-enable interrupts between 0x200 blocks,
+	// which keeps the sound IRQ fed (no audio crackle).
 	if (len >= 0x2000u) {
+		int oldIME = enterCriticalSection();
 		// Diagnostic: before touching the card, probe KEY2 liveness with a 0xB8
 		// (DATA_CHIPID) and snapshot the slot registers. id==chipID means the card
 		// is still in the KEY2 session (so no reset happened); which register
@@ -122,12 +119,17 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 			int tries = 12;
 			while (dscmCartReinit((u32*)dst) != 0 && --tries) { }
 		}
+		leaveCriticalSection(oldIME);
 	}
 #endif
 	while (len > 0) {
 		u32 off = src & 0x1FFu;
 		if (off == 0 && len >= 0x200u) {
+			// Per-block critical section: tiny IRQs-off window so the sound IRQ
+			// stays fed between blocks. Safe now the ownership stub holds KEY2.
+			int oldIME = enterCriticalSection();
 			dscmCardParamCommand(CARD_CMD_DATA_READ, src, cmdFlags, (u32*)dst, 0x200 / sizeof(u32));
+			leaveCriticalSection(oldIME);
 			dst += 0x200; src += 0x200; len -= 0x200;
 		} else {
 			u32 n = 0x200u - off;
@@ -136,7 +138,6 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 			dst += n; src += n; len -= n;
 		}
 	}
-	leaveCriticalSection(oldIME);
 }
 
 /* ------------------------------------------------------------------------- *
