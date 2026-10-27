@@ -3178,6 +3178,27 @@ u32 patchCardNdsArm9(cardengineArm9* ce9, const tNDSHeader* ndsHeader, const mod
     dbg_hexa(startOffset);
     dbg_printf("\n\n");
 
+	// Cheevotron cart mode: keep the ARM7 as the permanent Slot-1 bus owner so
+	// the live cartridge stays in its KEY2 session between the engine's reads.
+	// The SDK's MI_SetCardProcessor gives the ARM9 the bus (EXMEMCNT bit 11 clear)
+	// on every OS_LockCard; that bus handoff is what tears KEY2 down each read
+	// gap. Flip the ARM9-ownership path's `bic r0,r0,#0x800` to `orr` so asking
+	// for ARM9 keeps bit 11 set. Safe: all ARM9 card access is already patched to
+	// the engine, so the ARM9 never needs the bus.
+	{
+		extern bool dscheevosBootFromCart(void);
+		if (dscheevosBootFromCart()) {
+			static const u32 miSetProcSig[4] = {0xE1D100B0, 0xE3C00B02, 0xE1C100B0, 0xE12FFF1E};
+			u32* miLoc = findOffset((u32*)ndsHeader->arm9destination, ndsHeader->arm9binarySize, miSetProcSig, 4);
+			dbg_printf("DSCM MI_SetCardProcessor ");
+			dbg_hexa((u32)miLoc);
+			dbg_printf("\n");
+			if (miLoc) {
+				miLoc[1] = 0xE3800B02;   // bic r0,r0,#0x800 -> orr r0,r0,#0x800
+			}
+		}
+	}
+
 	patchMpu(ndsHeader, moduleParams, patchMpuRegion);
 	patchMpu2(ndsHeader, moduleParams, usesCloneboot);
 	patchMpuChange(ndsHeader, moduleParams);
