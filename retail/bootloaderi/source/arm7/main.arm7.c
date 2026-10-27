@@ -2470,6 +2470,13 @@ int arm7_main(void) {
 		if (strncmp(romTid, "ASM", 3) == 0) {
 			overlayPatch = true; // Allow overlay patching for SM64DS ROM hacks (ex. Mario's Holiday)
 		}
+		if (dscheevosCartMode && !useApPatch) {
+			// DScheevos cart mode: a real cartridge is no ROM hack, and with no AP-fix
+			// there is nothing to patch in its overlays. The card engine reads them
+			// from the cart like everything else, instead of this copying them from
+			// the SD dump into a file at every start (1.7 s).
+			overlayPatch = false;
+		}
 
 		tonccpy((u32*)ce7Location, (u32*)CARDENGINEI_ARM7_BUFFERED_LOCATION, ce7Size);
 		if (gameOnFlashcard || saveOnFlashcard) {
