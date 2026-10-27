@@ -86,8 +86,9 @@ void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 #ifndef TWLSDK
 	// The game's ARM7 boot reset the card out of KEY2, so rebuild the session
 	// once, before the first gameplay read on any path. IRQs off: it issues many
-	// card commands that must not be preempted.
-	static bool dscmKey2Ready = false;
+	// card commands that must not be preempted. In .data: the engine .bss is a
+	// tiny VRAM region with no spare room.
+	static bool dscmKey2Ready __attribute__((section(".data"))) = false;
 	if (!dscmKey2Ready) {
 		dscmKey2Ready = true;
 		int oldIME = enterCriticalSection();
@@ -245,7 +246,7 @@ static void decryptSecureArea(u32 gameCode, u32* secureArea) {
 		crypt_64bit_down(secureArea + i);
 }
 
-static struct { unsigned int iii, jjj, kkkkk, llll, mmm, nnn; } key1data;
+static struct { unsigned int iii, jjj, kkkkk, llll, mmm, nnn; } key1data __attribute__((section(".data")));
 
 static void initKey1Encryption(u8* cmdData) {
 	key1data.iii = getRandomNumber() & 0x00000fff;
