@@ -2008,13 +2008,15 @@ static void dscmNetdiagWrite(shim_shared_t* ring, u16 pc2, u16 pus, u32 gw) {
 // and its RF clock is on (W_POWER_US bit 0 = 0).
 static void dscheevosNetPoll(const u16 powcnt2, const u16 powerUs, const bool gameWifi) {
 	shim_shared_t* ring = *(shim_shared_t* volatile*)(DSCHEEVOS_LOCATION + DSCHEEVOS_H_NETRING);
-	// Snapshot the shim/net state to sd:/NETDIAG.TXT about every ~2 s, BEFORE the
-	// ring-null return and with no readOngoing gate, so even "ring never published"
-	// is captured. In CART mode the cart read uses the cart bus and this SD write
-	// the SD bus, so they don't conflict.
+	// Snapshot the shim/net state to sd:/NETDIAG.TXT, but only well AFTER boot
+	// (an SD write during the cart's KEY1/KEY2 secure-area reads froze the logo),
+	// and only when no cartridge read is in flight. ~1200 frames ~= 20 s skips
+	// boot + the logo, so the module has long since run module_init/net_init.
+	// This is placed before the ring-null return so "ring never published" shows.
 	{
 		static u32 dscmNetDiag __attribute__((section(".data"))) = 0;
-		if ((dscmNetDiag++ & 0x7F) == 0) {
+		dscmNetDiag++;
+		if (dscmNetDiag > 1200 && !readOngoing && (dscmNetDiag & 0x7F) == 0) {
 			dscmNetdiagWrite(ring, powcnt2, powerUs, gameWifi);
 		}
 	}
