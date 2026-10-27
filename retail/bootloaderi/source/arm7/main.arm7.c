@@ -864,8 +864,15 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp, aFile* romFile) {
 	// reads it with a gadget that only exists in that BIOS. nds-bootstrap does
 	// not switch to the NTR BIOS until much later (NTR_BIOS at arm7_main's tail),
 	// so without this the gadget runs against the DSi BIOS and hangs. Switch now.
-	dbg_printf("DScheevos cart: NTR_BIOS\n");
+	dbg_printf("DScheevos cart: NTR_BIOS scfg_ext7=");
+	dbg_hexa(REG_SCFG_EXT);
+	dbg_printf(" scfg_rom=");
+	dbg_hexa(REG_SCFG_ROM);
+	dbg_printf("\n");
 	NTR_BIOS();
+	dbg_printf("DScheevos cart: after NTR_BIOS scfg_rom=");
+	dbg_hexa(REG_SCFG_ROM);
+	dbg_printf("\n");
 	// Power and reset the real Slot-1 card (the launcher path does not leave it
 	// ready as a cold boot would), then read it.
 	dbg_printf("DScheevos cart: enableSlot1\n");
