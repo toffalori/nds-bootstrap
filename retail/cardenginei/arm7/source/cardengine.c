@@ -1997,13 +1997,15 @@ static void dscheevosNetPoll(const u16 powcnt2, const u16 powerUs, const bool ga
 	// the launcher (real hardware still to be tested).
 	ring->stats.ntr_powcnt2 = powcnt2;
 	ring->stats.ntr_power_us = powerUs;
+	// DIAGNOSTIC (stream pairing): do NOT pause the Atheros shim when gameWifi
+	// reads true. SM64DS and many games power the DS (NTR) Wi-Fi at boot without
+	// using it, and the W_POWER_US read in DSi mode may be a false positive, which
+	// would pause the shim forever and the phone never pairs. Keep counting it so a
+	// real DS-Wi-Fi game still shows up, but keep the DSi chip selected and poll.
+	// Safe for the SM64DS single-player test (no DS local wireless in use).
 	if (gameWifi) {
-		if (!(*(vu16*)0x04004C04 & BIT(8))) {
-			*(vu16*)0x04004C04 |= BIT(8);
-			dscheevosNtrSelected = 1;
-		}
 		ring->stats.paused_ntr_wifi++;
-		return;
+		// (test build: fall through to shim_poll instead of returning)
 	}
 	if (dscheevosNtrSelected) {
 		*(vu16*)0x04004C04 &= ~BIT(8);	// back to the DSi chip
