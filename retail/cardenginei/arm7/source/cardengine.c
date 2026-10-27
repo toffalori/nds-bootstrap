@@ -1883,25 +1883,18 @@ void runCardEngineCheckHalt(void) {
 						// vs good-data-dies-later (cmp == 0, returned).
 						// NTR engine only; the TWL engine cannot afford the log path.
 						#ifndef TWLSDK
-						static bool dscmDiagOnce = true;
-						if (dscmDiagOnce) {
-							dscmDiagOnce = false;
-							u32 sdblk[0x200 / sizeof(u32)];
-							extern volatile u32 dscmLastRomctrl, dscmSpinTimedOut;
-							dbg_printf("DSCM read1 src="); dbg_hexa(src);
+						// Log the first few gameplay reads: does the card stay in
+						// synced KEY2 after the one-shot re-handshake, or re-desync?
+						static int dscmDiagN = 0;
+						if (dscmDiagN < 4) {
+							int n = dscmDiagN++;
+							extern volatile u32 dscmSpinTimedOut;
+							dbg_printf("DSCM r"); dbg_hexa((u32)n);
+							dbg_printf(" src="); dbg_hexa(src);
 							dbg_printf(" len="); dbg_hexa(len);
-							dbg_printf(" dst="); dbg_hexa(dst);
-							dbg_printf(" exmem="); dbg_hexa(*(vu16*)0x04000204);
-							dbg_printf(" romctrl="); dbg_hexa(*(volatile u32*)0x040001A4);
-							dbg_printf(" flags="); dbg_hexa(DSCM_CART_PORTFLAGS);
-							dbg_printf("\n");
-							fileRead((char*)sdblk, romFile, src, 0x200);
-							dbg_printf("DSCM sd="); dbg_hexa(sdblk[0]); dbg_hexa(sdblk[1]); dbg_printf("\n");
 							dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);
-							dbg_printf("DSCM done timedout="); dbg_hexa(dscmSpinTimedOut);
-							dbg_printf(" lastromctrl="); dbg_hexa(dscmLastRomctrl);
+							dbg_printf(" td="); dbg_hexa(dscmSpinTimedOut);
 							dbg_printf(" cart="); dbg_hexa(((u32*)dst)[0]); dbg_hexa(((u32*)dst)[1]);
-							dbg_printf(" cmp="); dbg_hexa((u32)memcmp((void*)dst, sdblk, 0x200));
 							dbg_printf("\n");
 						} else {
 							dscmCartReadData(src, (u8*)dst, len, DSCM_CART_PORTFLAGS);

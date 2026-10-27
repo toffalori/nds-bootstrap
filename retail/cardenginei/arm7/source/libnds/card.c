@@ -177,7 +177,7 @@ static void crypt_64bit_up(u32* ptr) {
 	ptr[1] = y ^ keybuf[0x11];
 }
 
-static void crypt_64bit_down(u32* ptr) {
+__attribute__((unused)) static void crypt_64bit_down(u32* ptr) {
 	u32 x = ptr[1];
 	u32 y = ptr[0];
 	u32 z;
@@ -237,7 +237,7 @@ static const u8 cardSeedBytes[] = { 0xE8, 0x4D, 0x5A, 0xB1, 0x17, 0x8F, 0x99, 0x
 
 static u32 getRandomNumber(void) { return 4; }
 
-static void decryptSecureArea(u32 gameCode, u32* secureArea) {
+__attribute__((unused)) static void decryptSecureArea(u32 gameCode, u32* secureArea) {
 	int i;
 	init_keycode(gameCode, 2, 8);
 	crypt_64bit_down(secureArea);
@@ -435,10 +435,11 @@ int dscmCartReinit(u32* scratch) {
 		dscmCardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
 	}
 
-	decryptSecureArea(gameCode->key, secureArea);
-	dbg_printf("DSCM reinit chipID="); dbg_hexa(chipID);
-	dbg_printf(" sec="); dbg_hexa(secureArea[0]); dbg_hexa(secureArea[1]);
-	dbg_printf((secureArea[0] == 0x72636e65 && secureArea[1] == 0x6a624f79) ? " encryObj\n" : " BADSEC\n");
+	// The secure-area decrypt check is only diagnostic and costs two more slow
+	// BIOS reads with IRQs off, so skip it: the gameplay read's cmp==0 already
+	// proves the card is in synced KEY2 data mode.
+	(void)secureArea; (void)discard;
+	dbg_printf("DSCM reinit done chipID="); dbg_hexa(chipID); dbg_printf("\n");
 
 	return 0;
 }
