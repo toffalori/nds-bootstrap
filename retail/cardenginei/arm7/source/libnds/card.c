@@ -172,6 +172,10 @@ extern u32 dbg_hexa(u32 n);
  * tiny state vars stay static. */
 static u32 dscmKeycode[3] __attribute__((section(".data")));
 static u32* keybuf;   /* -> scratch; set at the top of dscmCartReinit */
+/* The level-2 Blowfish table is constant for a cartridge. Compute it once (the
+ * slow byte-by-byte BIOS gadget read) and reuse it for every re-handshake. */
+static u32 dscmBlowfishCache[KEYSIZE / sizeof(u32)] __attribute__((section(".data")));
+static bool dscmBlowfishCached __attribute__((section(".data"))) = false;
 #define keycode dscmKeycode
 
 static void crypt_64bit_up(u32* ptr) {
@@ -379,7 +383,13 @@ int dscmCartReinit(u32* scratch) {
 		return 2;
 
 	gameCode = (GameCode*)ndsHeader->gameCode;
-	init_keycode(gameCode->key, 2, 8);
+	if (!dscmBlowfishCached) {
+		init_keycode(gameCode->key, 2, 8);   // slow BIOS gadget read, once
+		memcpy(dscmBlowfishCache, keybuf, KEYSIZE);
+		dscmBlowfishCached = true;
+	} else {
+		memcpy(keybuf, dscmBlowfishCache, KEYSIZE);   // reuse, skip the BIOS read
+	}
 
 	portFlagsKey1 = CARD_ACTIVATE | CARD_nRESET | (ndsHeader->cardControl13 & (CARD_WR | CARD_CLK_SLOW)) |
 		((ndsHeader->cardControlBF & (CARD_CLK_SLOW | CARD_DELAY1(0x1FFF))) + ((ndsHeader->cardControlBF & CARD_DELAY2(0x3F)) >> 16));
