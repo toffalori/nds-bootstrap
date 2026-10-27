@@ -159,7 +159,7 @@ static void getSFCG_ARM7(void) {
 // clocks/access TWiLight Menu++ turns on).
 #define DSCHEEVOS_STAGE1_LOG "sd:/_nds/dscheevos/stage1.log"
 
-static void dscheevosStage1Log(const char* mode, const char* fmt, ...) {
+void dscheevosStage1Log(const char* mode, const char* fmt, ...) {
 	FILE* f = fopen(DSCHEEVOS_STAGE1_LOG, mode);
 	if (!f) return;
 	va_list ap;
@@ -411,7 +411,7 @@ static int runNdsFile(configuration* conf) {
 	}
 
 	if (isDSiMode()) {
-		dscheevosStage1Log("w", "stage1: scfg9 ext=%08lX clk=%04X, arm7 ext at start=%08lX, arm7 step %d",
+		dscheevosStage1Log("a", "stage1: scfg9 ext=%08lX clk=%04X, arm7 ext at start=%08lX, arm7 step %d",
 			REG_SCFG_EXT, REG_SCFG_CLK, REG_SCFG_EXT7, REG_IPC_SYNC & 0xF);
 	}
 	fifoSendValue32(FIFO_USER_03, 1);
@@ -638,6 +638,9 @@ int main(int argc, char** argv) {
 	configuration* conf = (configuration*)malloc(sizeof(configuration));
 
 	int status = loadFromSD(conf, argv[0]);
+	if (isDSiMode()) {
+		dscheevosStage1Log("a", "stage1: loadFromSD returned %d", status);
+	}
 	sdFound = (conf->sdFound && !conf->b4dsMode);
 	bootstrapOnFlashcard = conf->bootstrapOnFlashcard;
 

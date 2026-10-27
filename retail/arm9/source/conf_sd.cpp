@@ -723,12 +723,21 @@ void getIgmStrings(configuration* conf, bool b4ds) {
 	}
 }
 
+void dscheevosStage1Log(const char* mode, const char* fmt, ...);	// main.cpp
+
 int loadFromSD(configuration* conf, const char *bootstrapPath) {
 	int rc = 0;
 	fatMountSimple("sd", &__my_io_dsisd);
 	fatMountSimple("fat", dldiGetInternal());
 
 	conf->sdFound = (access("sd:/", F_OK) == 0);
+	if (conf->sdFound && isDSiMode()) {
+		// DScheevos: what the starter left for the TWLCFG/NAND decision below
+		dscheevosStage1Log("a", "--- stage1: %s", bootstrapPath);
+		dscheevosStage1Log("a", "stage1: twlcfg@2000400 %02X %02X %02X %02X 448=%02X, cid@2FFD7BC=%08lX, arm7 ext=%08lX, step %d",
+			*(u8*)0x02000400, *(u8*)0x02000401, *(u8*)0x02000402, *(u8*)0x02000404, *(u8*)0x02000448,
+			*(u32*)0x02FFD7BC, REG_SCFG_EXT7, REG_IPC_SYNC & 0xF);
+	}
 	const bool flashcardFound = (access("fat:/", F_OK) == 0);
 	const bool scfgSdmmcEnabled = (*(u8*)0x02FFFDF4 == 1);
 
@@ -1108,10 +1117,17 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 	bool useTwlCfg = (dsiFeatures() && (*(u8*)0x02000400 != 0) && (*(u8*)0x02000401 == 0) && (*(u8*)0x02000402 == 0) && (*(u8*)0x02000404 == 0) && (*(u8*)0x02000448 != 0));
 	bool nandMounted = false;
 	bool softResetIdFromTwlCfg = false;
+	if (isDSiMode() && conf->sdFound) {
+		dscheevosStage1Log("a", "stage1: useTwlCfg=%d", useTwlCfg);
+	}
 	if (!useTwlCfg && !conf->b4dsMode && isDSiMode() && conf->sdFound && conf->consoleModel < 2) {
 		bool sdNandFound = (conf->sdNand && access("sd:/shared1/TWLCFG0.dat", F_OK) == 0 && access("sd:/sys/HWINFO_N.dat", F_OK) == 0 && REG_SCFG_EXT7 == 0);
 		if (!sdNandFound) {
+			// DScheevos: nandio_startup() waits for this stage's ARM7 to read
+			// the eMMC CID unless 0x02FFD7BC already has it
+			dscheevosStage1Log("a", "stage1: mounting NAND, cid@2FFD7BC=%08lX", *(u32*)0x02FFD7BC);
 			nandMounted = fatMountSimple("nand", &io_dsi_nand);
+			dscheevosStage1Log("a", "stage1: NAND mounted=%d", nandMounted);
 		}
 
 		if (nandMounted || sdNandFound) {
