@@ -84,6 +84,8 @@ extern void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSH
 extern void dscheevosStamp(const char* what);
 extern bool dscheevosBootFromCart(void);            // dscheevos_hooks.c
 extern bool dscheevosStream(void);                  // dscheevos_hooks.c
+extern void dscheevosLoadingScreen(void);           // dscheevos_hooks.c
+extern void dscheevosPageFileUpdate(const char* src, aFile* file, u32 offset, u32 size);   // dscheevos_hooks.c
 extern int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID);   // dscheevos_cardboot.c
 extern void dscmCartRead(u32 src, u32* dest, size_t size);
 bool dscheevosCartMode = false;                     // boot the inserted Slot-1 cart, not the SD ROM
@@ -1868,6 +1870,7 @@ int arm7_main(void) {
 	//bool dsiModeConfirmed;
 	dscheevosCartMode = dscheevosBootFromCart();
 	arm9_holdWhite = dscheevosStream();   // Cheevotron: white until the game (main.arm9.c)
+	dscheevosLoadingScreen();              // and on it, a copy of the launcher's screen
 	if (dscheevosCartMode) {
 		loadBinary_ARM7_cart(&dsiHeaderTemp, romFile);
 	} else {
@@ -2751,8 +2754,13 @@ int arm7_main(void) {
 			aFile pageFile;
 			getFileFromCluster(&pageFile, pageFileCluster, bootstrapOnFlashcard);
 
-			fileWrite((char*)ndsHeader->arm9destination, &pageFile, 0x14000, iUncompressedSize);
-			fileWrite((char*)ndsHeader->arm7destination, &pageFile, 0x2C0000, newArm7binarySize);
+			if (dscheevosStream()) {   // same binaries at every start of a game: write what changed
+				dscheevosPageFileUpdate((char*)ndsHeader->arm9destination, &pageFile, 0x14000, iUncompressedSize);
+				dscheevosPageFileUpdate((char*)ndsHeader->arm7destination, &pageFile, 0x2C0000, newArm7binarySize);
+			} else {
+				fileWrite((char*)ndsHeader->arm9destination, &pageFile, 0x14000, iUncompressedSize);
+				fileWrite((char*)ndsHeader->arm7destination, &pageFile, 0x2C0000, newArm7binarySize);
+			}
 			fileWrite((char*)&iUncompressedSize, &pageFile, 0x5FFFF0, sizeof(u32));
 			fileWrite((char*)&newArm7binarySize, &pageFile, 0x5FFFF4, sizeof(u32));
 			if (ROMsupportsDsiMode(ndsHeader) && dsiModeConfirmed) {

@@ -117,6 +117,7 @@ $(LOADBIN)	:	$(LOADELF)
 $(LOADELF)	:	$(OFILES)
 	@echo linking $(notdir $@)
 	@$(LD)  $(LDFLAGS) $(OFILES) $(LIBPATHS) $(LIBS) -o $@
+	@sh $(TOPDIR)/../bootloaderi/check_arm9.sh $@ $(patsubst %gcc,%objdump,$(CC)) $(patsubst %gcc,%nm,$(CC))
 	
 	
 #dldiengine.bin.o : $(CURDIR)/../../data/dldiengine.bin

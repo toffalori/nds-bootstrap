@@ -45,6 +45,7 @@ SECTIONS
 	{
 		__arm9_start = . ;
 		*.arm9.*(.text*)
+		*.arm9.*(.rodata*)	/* DScheevos: the ARM9's constants too; elsewhere they sit in VRAM only the ARM7 maps */
 		*.arm9.*(.data*)
 		__arm9_bss_start = ABSOLUTE(.);
 		*.arm9.*(.bss*)

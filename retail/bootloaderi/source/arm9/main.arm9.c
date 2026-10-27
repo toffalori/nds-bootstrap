@@ -167,59 +167,37 @@ static void __attribute__((noinline)) placardTick(void) {
 	}
 }
 
-// Cheevotron loading screen: white, with "Loading" and dots that keep moving,
-// so a slow start doesn't look like a hang. Text in the launcher's cyan, dark
-// enough for white, where the launcher's own "Loading..." was. 8x8 glyphs
-// drawn 2x: one 2-pixel run is one 16-bit VRAM write (VRAM takes no bytes).
+// The ARM7 drew the Cheevotron loading screen at IMAGES_LOCATION (256x192,
+// 8 bpp; dscheevos_hooks.c, dscheevosLoadingScreen).
+volatile bool arm9_loadingScreenReady = false;
+
+// Cheevotron loading screen (arm9_holdWhite): white, then the ARM7's copy of
+// the launcher's screen with its "Loading..." dots kept moving, so a slow
+// start doesn't look like a hang. This code runs from arm9ram alone: only
+// immediate constants and plain loops, no tables and no division (check_arm9.sh).
 // Not in bootloaderi2: its ARM9 code has 4 KB, and only some DSiWare use it.
 #ifndef LOADERTYPE2
-#define LOADING_BG    1   // palette entries
-#define LOADING_INK   2
-#define LOADING_X     48  // 10 glyphs of 16 px, centred
-#define LOADING_Y     120
-static const u8 loadingGlyphs[8][8] = {
-	{0x60,0x60,0x60,0x60,0x60,0x60,0x7E,0x00},   // L
-	{0x00,0x00,0x3C,0x66,0x66,0x66,0x3C,0x00},   // o
-	{0x00,0x00,0x3C,0x06,0x3E,0x66,0x3E,0x00},   // a
-	{0x06,0x06,0x3E,0x66,0x66,0x66,0x3E,0x00},   // d
-	{0x18,0x00,0x38,0x18,0x18,0x18,0x3C,0x00},   // i
-	{0x00,0x00,0x7C,0x66,0x66,0x66,0x66,0x00},   // n
-	{0x00,0x00,0x3E,0x66,0x66,0x3E,0x06,0x3C},   // g
-	{0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00},   // .
-};
-static const u8 blankGlyph[8] = {0};
-
-static void drawGlyph(int slot, const u8* rows) {
-	vu16* fb = (vu16*)0x06000000;   // top screen: VRAM_E, BG3 8bpp
-	const int x0 = LOADING_X + slot * 16;
-	for (int r = 0; r < 16; r++) {
-		for (int c = 0; c < 8; c++) {
-			const u8 px = (rows[r / 2] & (0x80 >> c)) ? LOADING_INK : LOADING_BG;
-			fb[((LOADING_Y + r) * 256 + x0 + c * 2) / 2] = px | (px << 8);
-		}
-	}
-}
-
-static void drawLoadingDots(int dots) {
-	for (int i = 0; i < 3; i++) {
-		drawGlyph(7 + i, (i < dots) ? loadingGlyphs[7] : blankGlyph);
-	}
-}
-
-static void drawLoadingScreen(void) {
-	for (int i = 0; i < 7; i++) {
-		drawGlyph(i, loadingGlyphs[i]);
-	}
-	drawLoadingDots(0);
-}
-
-// Palettes and power for the white screen: re-asserted every pass of the wait
-// loop, as the loaders reset video while they work.
+// Palettes and power: re-asserted every pass of the wait loop, as the loaders
+// reset video while they work. The launcher's white theme (launcher/source/ui.c);
+// entries as dscheevos_hooks.c draws them.
 static void holdLoadingScreen(void) {
-	BG_PALETTE[0] = BG_PALETTE[LOADING_BG] = RGB15(31, 31, 31);
-	BG_PALETTE[LOADING_INK] = RGB15(0, 16, 20);
-	BG_PALETTE_SUB[0] = BG_PALETTE_SUB[LOADING_BG] = RGB15(31, 31, 31);
+	BG_PALETTE[0] = RGB15(31, 31, 31);   // background
+	BG_PALETTE[1] = RGB15(0, 11, 15);    // wordmark
+	BG_PALETTE[2] = RGB15(0, 15, 19);    // rule, "Loading..."
+	BG_PALETTE[3] = RGB15(13, 13, 14);   // tagline
+	BG_PALETTE[4] = RGB15(4, 4, 5);      // game, status
+	BG_PALETTE_SUB[0] = RGB15(31, 31, 31);
 	REG_POWERCNT |= BIT(1);   // 2D engine A: the top screen
+}
+
+// The dots of "Loading..." (row 16, columns 18-20): the font's '.' is the two
+// pixels at x+2, y+6 of its cell, so one 16-bit VRAM write each (VRAM takes no
+// byte writes): halfword 73 + 4*i of pixel row 134.
+static void drawLoadingDots(int dots) {
+	vu16* row = (vu16*)0x06000000 + 134 * 128;
+	for (int i = 0; i < 3; i++) {
+		row[73 + i * 4] = (i < dots) ? 0x0202 : 0x0000;
+	}
 }
 #endif
 
@@ -369,9 +347,10 @@ void arm9_main(void) {
 	bool whiteShown = false;   // the Cheevotron loading screen is up (arm9_holdWhite)
 	bool screensCleared = false;   // ARM9_SCRNCLR ran: the screens are the game's now
 #ifndef LOADERTYPE2
+	bool loadingShown = false;   // the ARM7's loading screen is in VRAM_E
 	u16 lastVcount = 0;
-	u32 frames = 0;
-	int dotsShown = 0;
+	int dotFrames = 0;
+	int dots = 3;
 #endif
 	while (arm9_stateFlag != ARM9_BOOTBIN) {
 		// Hold the loading screen every frame: the loader and the module
@@ -386,27 +365,27 @@ void arm9_main(void) {
 #ifndef LOADERTYPE2
 			if (arm9_holdWhite != whiteShown) {
 				whiteShown = arm9_holdWhite;
-				if (whiteShown) {
-					drawLoadingScreen();
-					dotsShown = 0;
-				} else {   // not a Cheevotron session: the DScheevos brand screen
+				const u32 fill = whiteShown ? 0 : 0x01010101;   // white, or the brand colour
+				dmaFill9(fill, (void*)0x06000000, 0x10000);
+				dmaFill9(fill, BG_GFX_SUB, 0x10000);
+				if (!whiteShown) {   // not a Cheevotron session: the DScheevos brand screen
 					BG_PALETTE[0] = BG_PALETTE_SUB[0] = 0;
 					BG_PALETTE[1] = BG_PALETTE_SUB[1] = RGB15(2, 3, 9);
-					dmaFill9(0x01010101, (void*)0x06000000, 0x10000);   // no text
 				}
 			}
 			if (whiteShown) {
 				holdLoadingScreen();
+				if (arm9_loadingScreenReady && !loadingShown) {
+					dmaCopy((void*)IMAGES_LOCATION, (void*)0x06000000, 256 * 192);
+					loadingShown = true;
+				}
 				const u16 vcount = REG_VCOUNT;
-				if (vcount < lastVcount) {
-					frames++;
+				if (loadingShown && vcount < lastVcount && ++dotFrames >= 20) {   // every 20th new frame
+					dotFrames = 0;
+					dots = (dots + 1) & 3;
+					drawLoadingDots(dots);
 				}
 				lastVcount = vcount;
-				const int dots = (frames / 20) % 4;
-				if (dots != dotsShown) {
-					drawLoadingDots(dots);
-					dotsShown = dots;
-				}
 			}
 #endif
 			SetBrightness(0, 0);

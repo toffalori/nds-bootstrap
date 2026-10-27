@@ -23,6 +23,7 @@
 #include "dscheevos_hooks.h"
 #include "locations.h"
 #include "igm_text.h"
+#include "cheevotron_font.h"
 
 extern void readFirmware(u32 address, void* destination, u32 size); // libnds/firmware.c
 extern u32 dscheevosModuleCluster;
@@ -284,6 +285,101 @@ static void placard(void) {
 
 	arm9_stateFlag = ARM9_DSCHEEVOS_PLACARD;
 	while (arm9_stateFlag != ARM9_READY);
+}
+
+// The Cheevotron loading screen (stream sessions): a copy of the launcher's
+// splash in its font, colours and rows (launcher/source/ui.c, ui_splash), so
+// that from the launcher to the game the start looks like one screen. Drawn
+// here, like the session card above, into the ESRB screen's buffer (a stream
+// session shows no ESRB screen), as a 256x192 8 bpp bitmap. The ARM9 shows it
+// and keeps its dots moving (main.arm9.c), with these palette entries:
+#define LOADING_SCREEN    ((u8*)IMAGES_LOCATION)
+#define LOADING_WORDMARK  1
+#define LOADING_ACCENT    2
+#define LOADING_DIM       3
+#define LOADING_TEXT      4
+
+// One line, centred on whole columns as ui.c's center() does; bytes outside
+// ASCII 32-126 show as '?'.
+static void loadingText(int row, const char* in, u8 color) {
+	int n = 0;
+	while (in[n] && n < 32) {
+		n++;
+	}
+	u8* dst = LOADING_SCREEN + row * 8 * 256 + ((32 - n) / 2) * 8;
+	for (int i = 0; i < n; i++, dst += 8) {
+		u8 c = (u8)in[i];
+		if (c < 0x20 || c > 0x7E) {
+			c = '?';
+		}
+		const u8* glyph = cheevotronFont + (c - 0x20) * 8;
+		for (int y = 0; y < 8; y++) {
+			for (int x = 0; x < 8; x++) {
+				if (glyph[y] & BIT(x)) {
+					dst[y * 256 + x] = color;
+				}
+			}
+		}
+	}
+}
+
+void dscheevosLoadingScreen(void) {
+	if (!dscheevosStream()) {
+		return;
+	}
+	char path[256];
+	aFile file;
+	getFileFromCluster(&file, dscheevosSessionCluster, false);
+	fileRead(path, &file, DSCHEEVOS_S_ROM_PATH, sizeof(path));
+	path[sizeof(path) - 1] = 0;
+	const char* name = path;
+	for (const char* p = path; *p; p++) {
+		if (*p == '/') {
+			name = p + 1;
+		}
+	}
+	char shown[31];   // the launcher shows the file name's first 30 characters
+	int n = 0;
+	for (; name[n] && n < 30; n++) {
+		shown[n] = name[n];
+	}
+	shown[n] = 0;
+
+	toncset(LOADING_SCREEN, 0, 256 * 192);
+	loadingText(8, "C H E E V O T R O N", LOADING_WORDMARK);
+	loadingText(9, "--------------------", LOADING_ACCENT);
+	loadingText(11, "achievements on real hardware", LOADING_DIM);
+	loadingText(14, shown, LOADING_TEXT);
+	loadingText(16, "Loading...", LOADING_ACCENT);
+	loadingText(18, "Starting with achievements...", LOADING_TEXT);   // the launcher's last line
+	arm9_loadingScreenReady = true;
+}
+
+// The page file's copy of the game's binaries (for soft resets and the
+// in-game menu) is the same at every start of the same game, and writing it
+// took 1.6 s. Reading is much faster than writing on the SD card: compare it
+// chunk by chunk and write only the chunks that differ. Stream sessions only:
+// the scratch is the ESRB screen's buffer after the loading screen, and a
+// stream session shows no ESRB screen.
+#define PAGE_SCRATCH  ((u8*)IMAGES_LOCATION + 256 * 192)
+#define PAGE_CHUNK    0xC000
+
+void dscheevosPageFileUpdate(const char* src, aFile* file, u32 offset, u32 size) {
+	u32 written = 0;
+	for (u32 done = 0; done < size; done += PAGE_CHUNK) {
+		const u32 n = (size - done < PAGE_CHUNK) ? size - done : PAGE_CHUNK;
+		fileRead((char*)PAGE_SCRATCH, file, offset + done, n);
+		if (memcmp(PAGE_SCRATCH, src + done, n) != 0) {
+			fileWrite(src + done, file, offset + done, n);
+			written += n;
+		}
+	}
+	toncset(PAGE_SCRATCH, 0, PAGE_CHUNK);
+	dbg_printf("DScheevos: page file ");
+	dbg_hexa(written);
+	dbg_printf(" of ");
+	dbg_hexa(size);
+	dbg_printf(" bytes written\n");
 }
 
 // Boot clock for the log: tenths of a second since the bootloader started
