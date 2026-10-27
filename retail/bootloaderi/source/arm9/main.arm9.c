@@ -167,6 +167,59 @@ static void __attribute__((noinline)) placardTick(void) {
 	}
 }
 
+// Cheevotron loading screen: white, with "Loading" and dots that keep moving,
+// so a slow start doesn't look like a hang. Text in the launcher's cyan, dark
+// enough for white, where the launcher's own "Loading..." was. 8x8 glyphs
+// drawn 2x: one 2-pixel run is one 16-bit VRAM write (VRAM takes no bytes).
+#define LOADING_BG    1   // palette entries
+#define LOADING_INK   2
+#define LOADING_X     48  // 10 glyphs of 16 px, centred
+#define LOADING_Y     120
+static const u8 loadingGlyphs[8][8] = {
+	{0x60,0x60,0x60,0x60,0x60,0x60,0x7E,0x00},   // L
+	{0x00,0x00,0x3C,0x66,0x66,0x66,0x3C,0x00},   // o
+	{0x00,0x00,0x3C,0x06,0x3E,0x66,0x3E,0x00},   // a
+	{0x06,0x06,0x3E,0x66,0x66,0x66,0x3E,0x00},   // d
+	{0x18,0x00,0x38,0x18,0x18,0x18,0x3C,0x00},   // i
+	{0x00,0x00,0x7C,0x66,0x66,0x66,0x66,0x00},   // n
+	{0x00,0x00,0x3E,0x66,0x66,0x3E,0x06,0x3C},   // g
+	{0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00},   // .
+};
+static const u8 blankGlyph[8] = {0};
+
+static void drawGlyph(int slot, const u8* rows) {
+	vu16* fb = (vu16*)0x06000000;   // top screen: VRAM_E, BG3 8bpp
+	const int x0 = LOADING_X + slot * 16;
+	for (int r = 0; r < 16; r++) {
+		for (int c = 0; c < 8; c++) {
+			const u8 px = (rows[r / 2] & (0x80 >> c)) ? LOADING_INK : LOADING_BG;
+			fb[((LOADING_Y + r) * 256 + x0 + c * 2) / 2] = px | (px << 8);
+		}
+	}
+}
+
+static void drawLoadingDots(int dots) {
+	for (int i = 0; i < 3; i++) {
+		drawGlyph(7 + i, (i < dots) ? loadingGlyphs[7] : blankGlyph);
+	}
+}
+
+static void drawLoadingScreen(void) {
+	for (int i = 0; i < 7; i++) {
+		drawGlyph(i, loadingGlyphs[i]);
+	}
+	drawLoadingDots(0);
+}
+
+// Palettes and power for the white screen: re-asserted every pass of the wait
+// loop, as the loaders reset video while they work.
+static void holdLoadingScreen(void) {
+	BG_PALETTE[0] = BG_PALETTE[LOADING_BG] = RGB15(31, 31, 31);
+	BG_PALETTE[LOADING_INK] = RGB15(0, 16, 20);
+	BG_PALETTE_SUB[0] = BG_PALETTE_SUB[LOADING_BG] = RGB15(31, 31, 31);
+	REG_POWERCNT |= BIT(1);   // 2D engine A: the top screen
+}
+
 void waitFrames(int frames) {
 	for (int i = 0; i < frames; i++) {
 		while (REG_VCOUNT != 191);
@@ -310,19 +363,50 @@ void arm9_main(void) {
 
 	// Set ARM9 state to ready and wait for it to change again
 	arm9_stateFlag = ARM9_READY;
+	bool whiteShown = false;   // the Cheevotron loading screen is up (arm9_holdWhite)
+	bool screensCleared = false;   // ARM9_SCRNCLR ran: the screens are the game's now
+	u16 lastVcount = 0;
+	u32 frames = 0;
+	int dotsShown = 0;
 	while (arm9_stateFlag != ARM9_BOOTBIN) {
-		// Hold the brand loading screen every frame: the loader and the module
+		// Hold the loading screen every frame: the loader and the module
 		// keep resetting video/brightness during the load, so re-assert the BG3
 		// bitmaps (top VRAM_E, bottom VRAM_H/I) and normal brightness. The game
 		// takes over when the loop exits.
-		REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
-		REG_BG3CNT = (u16)BgSize_B8_256x256;
-		REG_DISPCNT_SUB = MODE_3_2D | DISPLAY_BG3_ACTIVE;
-		REG_BG3CNT_SUB = (u16)BgSize_B8_256x256;
-		SetBrightness(0, arm9_holdWhite ? 31 : 0);
-		SetBrightness(1, arm9_holdWhite ? 31 : 0);
-		topScreenFadedIn = true;
-		bottomScreenFadedIn = true;
+		if (!screensCleared) {
+			REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
+			REG_BG3CNT = (u16)BgSize_B8_256x256;
+			REG_DISPCNT_SUB = MODE_3_2D | DISPLAY_BG3_ACTIVE;
+			REG_BG3CNT_SUB = (u16)BgSize_B8_256x256;
+			if (arm9_holdWhite != whiteShown) {
+				whiteShown = arm9_holdWhite;
+				if (whiteShown) {
+					drawLoadingScreen();
+					dotsShown = 0;
+				} else {   // not a Cheevotron session: the DScheevos brand screen
+					BG_PALETTE[0] = BG_PALETTE_SUB[0] = 0;
+					BG_PALETTE[1] = BG_PALETTE_SUB[1] = RGB15(2, 3, 9);
+					dmaFill9(0x01010101, (void*)0x06000000, 0x10000);   // no text
+				}
+			}
+			if (whiteShown) {
+				holdLoadingScreen();
+				const u16 vcount = REG_VCOUNT;
+				if (vcount < lastVcount) {
+					frames++;
+				}
+				lastVcount = vcount;
+				const int dots = (frames / 20) % 4;
+				if (dots != dotsShown) {
+					drawLoadingDots(dots);
+					dotsShown = dots;
+				}
+			}
+			SetBrightness(0, 0);
+			SetBrightness(1, 0);
+			topScreenFadedIn = true;
+			bottomScreenFadedIn = true;
+		}
 		if (placardFrames > 0) {
 			placardTick();
 		}
@@ -344,7 +428,10 @@ void arm9_main(void) {
 				dmaFill9(0, BG_PALETTE, 2*1024);
 				dmaFill9(0, VRAM_A, 0x18000);		// Bank A
 				dmaFill9(0, BG_GFX_SUB, 0xC000);		// Bank H-I
+				dmaFill9(0, (void*)0x06000000, 0x10000);	// Bank E: the top loading screen
 			}
+			screensCleared = true;
+			VRAM_E_CR = 0;
 			// so the game doesn't see the placard's skip key as a new press
 			for (; placardFrames < 0 && (REG_KEYINPUT & PLACARD_KEYS) != PLACARD_KEYS; placardFrames++) {
 				waitFrames(1);
@@ -364,7 +451,7 @@ void arm9_main(void) {
 			arm9_stateFlag = ARM9_READY;
 		}
 		if (arm9_stateFlag == ARM9_DISPESRB) { // Display ESRB rating and descriptor(s) for current title
-			if (*(u32*)IMAGES_LOCATION != 0) {
+			if (*(u32*)IMAGES_LOCATION != 0 && !whiteShown) {   // Cheevotron keeps its loading screen
 				esrbScreenPrepared = true;
 				if (bottomScreenFadedIn && esrbOnlineNoticeFound) {
 					fadeOut(BIT(1));
@@ -387,7 +474,9 @@ void arm9_main(void) {
 			arm9_stateFlag = ARM9_READY;
 		}
 		if (arm9_stateFlag == ARM9_DISPSCRN) { // Display nds-bootstrap: Please wait
-			arm9_pleaseWaitText();
+			if (!whiteShown) {   // Cheevotron keeps its loading screen
+				arm9_pleaseWaitText();
+			}
 			if (!bottomScreenFadedIn) {
 				fadeIn(BIT(1));
 				bottomScreenFadedIn = true;
