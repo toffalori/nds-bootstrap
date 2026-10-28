@@ -8,12 +8,14 @@
  */
 #include <nds.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
 #include "configuration.h"
 #include "dscheevos_hooks.h"
+#include "cheevotron_loading.h"
 
 #define DSCHEEVOS_DIR "sd:/_nds/dscheevos/"
 #define DSCHEEVOS_SESSION_HEAD (DSCHEEVOS_S_UNIX_TIME + 4)
@@ -75,6 +77,50 @@ int dscheevosHardcorePending(const configuration* conf) {
 	u32 head[DSCHEEVOS_SESSION_HEAD / 4];
 	struct stat stModule, stSession;
 	return readSession(conf, head, &stModule, &stSession) && ((const u8*)head)[DSCHEEVOS_S_HARDCORE];
+}
+
+// A Cheevotron stream session: put its loading screen on the top screen now,
+// as the bootloader's will look (cheevotron_loading.h). Without it, both
+// screens stayed white from the launcher's end until the bootloader drew its
+// screen. Main engine, BG3 8 bpp bitmap on VRAM_E, set up as the bootloader's
+// ARM9 sets it, which then keeps it (CHEEVOTRON_SCREEN_MARK). The bottom
+// screen stays white (display off). Not with a colour LUT, which lives on VRAM_E.
+void dscheevosStage1Screen(const configuration* conf) {
+	u32 head[DSCHEEVOS_SESSION_HEAD / 4];
+	struct stat stModule, stSession;
+	if (!readSession(conf, head, &stModule, &stSession) || !(((const u8*)head)[DSCHEEVOS_S_FLAGS] & DSCHEEVOS_BOOT_STREAM)) {
+		return;
+	}
+	u8* screen = (u8*)calloc(256 * 192, 1);	// all CHEEVOTRON_LOADING_BACKGROUND
+	if (!screen) {
+		return;
+	}
+	char path[256];
+	memcpy(path, (const char*)head + DSCHEEVOS_S_ROM_PATH, sizeof(path));
+	path[sizeof(path) - 1] = 0;
+	cheevotronLoadingScreen(screen, path);
+
+	REG_DISPCNT = 0;	// white while it is set up
+	for (vu16* p = &REG_BG0CNT; p <= &REG_MASTER_BRIGHT; p++) {
+		*p = 0;	// scroll, affine, windows, blending, brightness: as after the bootloader's reset
+	}
+	vramSetBankE(VRAM_E_MAIN_BG);
+	for (int i = 0; i < 256 * 192 / 4; i++) {
+		((vu32*)0x06000000)[i] = ((const u32*)screen)[i];	// VRAM takes no byte writes
+	}
+	free(screen);
+	*CHEEVOTRON_SCREEN_MARK = CHEEVOTRON_SCREEN_MAGIC;
+	BG_PALETTE[CHEEVOTRON_LOADING_BACKGROUND] = CHEEVOTRON_RGB_BACKGROUND;
+	BG_PALETTE[CHEEVOTRON_LOADING_WORDMARK] = CHEEVOTRON_RGB_WORDMARK;
+	BG_PALETTE[CHEEVOTRON_LOADING_ACCENT] = CHEEVOTRON_RGB_ACCENT;
+	BG_PALETTE[CHEEVOTRON_LOADING_DIM] = CHEEVOTRON_RGB_DIM;
+	BG_PALETTE[CHEEVOTRON_LOADING_TEXT] = CHEEVOTRON_RGB_TEXT;
+	REG_BG3CNT = (u16)BgSize_B8_256x256;
+	REG_BG3PA = 0x0100;
+	REG_BG3PD = 0x0100;
+	REG_POWERCNT = BIT(0) | BIT(1) | BIT(9) | BIT(15);	// LCDs, 2D engines A and B, engine A on the top screen
+	REG_DISPCNT_SUB = 0;
+	REG_DISPCNT = MODE_3_2D | DISPLAY_BG3_ACTIVE;
 }
 
 // softResetParams.bin is how a reset that reboots the console hands over to

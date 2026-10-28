@@ -44,6 +44,8 @@
 #include "locations.h"
 #include "dscheevos_hooks.h"
 #include "loading.h"
+#define CHEEVOTRON_LOADING_CONSTANTS_ONLY
+#include "cheevotron_loading.h"
 
 #define REG_MBK_CACHE_START	0x4004044
 
@@ -65,9 +67,14 @@ bool arm9_boostVram = false;
 // zeroed this variable before the ARM9 read it (crt0.arm9.s).
 volatile bool arm9_brandScreen = false;
 // What the loading screen did, for the ARM7's log: bit 0 the white flag at the
-// wait loop's first pass, bit 1 the brand screen was put up, bits 8-15 switches
-// between the two.
+// wait loop's first pass, bit 1 the brand screen was put up, bit 2 the first
+// stage's loading screen was kept, bits 8-15 switches between the two.
 volatile u32 arm9_screenTrace = 0;
+#ifndef LOADERTYPE2
+// The first stage's clock (its ARM9 timers 2+3, 32728 Hz) when this code
+// started, for the ARM7's log: when the hand-over ended, in stage1.log's time.
+volatile u32 arm9_stage1Ticks = 0;
+#endif
 u32 arm9_SCFG_EXT = 0;
 u16 arm9_SCFG_CLK = 0;
 volatile bool esrbScreenPrepared = false;
@@ -187,12 +194,12 @@ volatile bool arm9_loadingScreenReady = false;
 // reset video while they work. The launcher's white theme (launcher/source/ui.c);
 // entries as dscheevos_hooks.c draws them.
 static void holdLoadingScreen(void) {
-	BG_PALETTE[0] = RGB15(31, 31, 31);   // background
-	BG_PALETTE[1] = RGB15(0, 11, 15);    // wordmark
-	BG_PALETTE[2] = RGB15(0, 15, 19);    // rule, "Loading..."
-	BG_PALETTE[3] = RGB15(13, 13, 14);   // tagline
-	BG_PALETTE[4] = RGB15(4, 4, 5);      // game, status
-	BG_PALETTE_SUB[0] = RGB15(31, 31, 31);
+	BG_PALETTE[CHEEVOTRON_LOADING_BACKGROUND] = CHEEVOTRON_RGB_BACKGROUND;
+	BG_PALETTE[CHEEVOTRON_LOADING_WORDMARK] = CHEEVOTRON_RGB_WORDMARK;
+	BG_PALETTE[CHEEVOTRON_LOADING_ACCENT] = CHEEVOTRON_RGB_ACCENT;
+	BG_PALETTE[CHEEVOTRON_LOADING_DIM] = CHEEVOTRON_RGB_DIM;
+	BG_PALETTE[CHEEVOTRON_LOADING_TEXT] = CHEEVOTRON_RGB_TEXT;
+	BG_PALETTE_SUB[0] = CHEEVOTRON_RGB_BACKGROUND;
 	REG_POWERCNT |= BIT(1);   // 2D engine A: the top screen
 }
 
@@ -225,7 +232,22 @@ Modified by Chishm:
 --------------------------------------------------------------------------*/
 void arm9_main(void) {
  	register int i, reg;
-  
+
+#ifndef LOADERTYPE2
+	arm9_stage1Ticks = TIMER_DATA(2) | ((u32)TIMER_DATA(3) << 16);   // before the timers are reset below
+	// The first stage put the Cheevotron loading screen up (top screen, BG3 on
+	// VRAM_E, cheevotron_loading.h): keep the top screen as it is, so the start
+	// shows one screen from the launcher to the game, until the ARM7's copy of
+	// the same screen replaces it.
+	const bool keepTop = (*CHEEVOTRON_SCREEN_MARK == CHEEVOTRON_SCREEN_MAGIC);
+	if (keepTop) {
+		*CHEEVOTRON_SCREEN_MARK = 0;
+		arm9_screenTrace |= 4;
+	}
+#else
+	const bool keepTop = false;
+#endif
+
 	// Set shared ram to ARM7
 	WRAM_CR = 0x03;
 	REG_EXMEMCNT = 0xE880;
@@ -276,26 +298,38 @@ void arm9_main(void) {
 	// Don't mess with the VRAM used for execution
 	//VRAM_C_CR = 0x80;
 	//VRAM_D_CR = 0;
-	VRAM_E_CR = 0x80;
+	if (!keepTop) {   // kept: VRAM_E stays the top screen's BG, so the clear below misses it
+		VRAM_E_CR = 0x80;
+	}
 	VRAM_F_CR = 0x80;
 	VRAM_G_CR = 0x80;
 	VRAM_H_CR = 0x80;
 	VRAM_I_CR = 0x80;
-	dmaFill9(0, BG_PALETTE, 2*1024);
+	if (keepTop) {
+		dmaFill9(0, (void*)0x05000200, 2*1024 - 0x200);   // all palettes but the top screen's BG
+	} else {
+		dmaFill9(0, BG_PALETTE, 2*1024);
+	}
 	dmaFill9(0, OAM, 2*1024);
-	for (vu16 *p = (vu16*)&REG_DISPCNT; p <= (vu16*)&REG_MASTER_BRIGHT; p++)
-	{
-		// Skip VCOUNT. Writing to it was setting it to 0 causing a frame to be
-		// misrendered. This can also have side effects on 3DS, even though the
-		// official TWL_FIRM can recover from it.
-		if (p != (vu16*)&REG_VCOUNT)
-			*p = 0;
+	if (!keepTop) {   // kept: as the first stage set them, the same as below
+		for (vu16 *p = (vu16*)&REG_DISPCNT; p <= (vu16*)&REG_MASTER_BRIGHT; p++)
+		{
+			// Skip VCOUNT. Writing to it was setting it to 0 causing a frame to be
+			// misrendered. This can also have side effects on 3DS, even though the
+			// official TWL_FIRM can recover from it.
+			if (p != (vu16*)&REG_VCOUNT)
+				*p = 0;
+		}
+	} else {
+		REG_DISPSTAT = 0;   // the first stage's VBlank IRQ
 	}
 	for (vu16 *p = (vu16*)&REG_DISPCNT_SUB; p <= (vu16*)&REG_MASTER_BRIGHT_SUB; p++)
 	{
 		*p = 0;
 	}
-	SetBrightness(0, 31);
+	if (!keepTop) {
+		SetBrightness(0, 31);
+	}
 	SetBrightness(1, 31);
 	dmaFill9(0, VRAM_A, 0x20000*3);		// Banks A, B, C
 	dmaFill9(0, VRAM_D, 272*1024);		// Banks D (excluded), E, F, G, H, I
@@ -307,7 +341,9 @@ void arm9_main(void) {
 	// Don't mess with the ARM7's VRAM
 	//VRAM_C_CR = 0;
 	//VRAM_D_CR = 0;
-	VRAM_E_CR = 0;
+	if (!keepTop) {
+		VRAM_E_CR = 0;
+	}
 	VRAM_F_CR = 0;
 	VRAM_G_CR = 0;
 	VRAM_H_CR = VRAM_ENABLE | VRAM_H_SUB_BG;
@@ -327,7 +363,9 @@ void arm9_main(void) {
 	REG_BG3PA_SUB = 0x0100;
 	REG_BG3PD_SUB = 0x0100;
 
-	REG_POWERCNT = BIT(0) | BIT(9) | BIT(15); // POWER_LCD | POWER_2D_B | POWER_SWAP_LCDS
+	// POWER_LCD | POWER_2D_B | POWER_SWAP_LCDS, and engine A at once when the
+	// first stage's top screen is kept (off for a moment, it would show black)
+	REG_POWERCNT = keepTop ? (BIT(0) | BIT(1) | BIT(9) | BIT(15)) : (BIT(0) | BIT(9) | BIT(15));
 
 	{
 		u16 c = RGB15(2, 3, 9);
@@ -338,10 +376,15 @@ void arm9_main(void) {
 			BG_PALETTE_SUB[0] = c;
 			REG_POWERCNT |= BIT(1);   // engine A on, or the top screen shows black
 		}
+		if (keepTop) {
+			holdLoadingScreen();   // the first stage's palette, unchanged
+		} else
 #endif
-		BG_PALETTE[1] = c;
+		{
+			BG_PALETTE[1] = c;
+			dmaFill9(0x01010101, (void*)0x06000000, 0x10000);   // top: VRAM_E BG3 8bpp
+		}
 		BG_PALETTE_SUB[1] = c;
-		dmaFill9(0x01010101, (void*)0x06000000, 0x10000);   // top: VRAM_E BG3 8bpp
 		dmaFill9(0x01010101, BG_GFX_SUB, 0x10000);          // bottom: VRAM_H/I BG3 8bpp
 	}
 
@@ -386,7 +429,9 @@ void arm9_main(void) {
 				whiteShown = !arm9_brandScreen;
 				arm9_screenTrace += 0x100;
 				const u32 fill = whiteShown ? 0 : 0x01010101;   // white, or the brand colour
-				dmaFill9(fill, (void*)0x06000000, 0x10000);   // VRAM_E, 64 KB
+				if (!(keepTop && whiteShown)) {   // the first stage's loading screen stays
+					dmaFill9(fill, (void*)0x06000000, 0x10000);   // VRAM_E, 64 KB
+				}
 				dmaFill9(fill, BG_GFX_SUB, 0xC000);           // VRAM_H+I, 48 KB
 				if (!whiteShown) {   // not a Cheevotron session: the DScheevos brand screen
 					BG_PALETTE[0] = BG_PALETTE_SUB[0] = 0;

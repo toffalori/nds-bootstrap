@@ -1877,7 +1877,13 @@ int arm7_main(void) {
 	if (dscheevosWanted()) {
 		dbg_printf("DScheevos: ARM9 started after ");
 		dbg_hexa(arm9StartTicks);   // 32768 Hz ticks from the bootloader's first step
+#ifndef LOADERTYPE2
+		dbg_printf(" ticks, at ");
+		dbg_hexa(arm9_stage1Ticks);   // the first stage's clock (32728 Hz), as stage1.log's ms
+		dbg_printf(" stage 1 ticks\n");
+#else
 		dbg_printf(" ticks\n");
+#endif
 	}
 	dscheevosCartMode = dscheevosBootFromCart();
 	arm9_brandScreen = !dscheevosStream();   // Cheevotron: white until the game (main.arm9.c)
@@ -2811,7 +2817,7 @@ int arm7_main(void) {
 	dscheevosStamp("screens cleared");
 	if (dscheevosWanted()) {
 		dbg_printf("DScheevos: loading screen trace ");
-		dbg_hexa(arm9_screenTrace);   // bit 0 white at the start, bit 1 brand screen shown, bits 8-15 switches
+		dbg_hexa(arm9_screenTrace);   // bit 0 white at the start, bit 1 brand screen shown, bit 2 stage 1's screen kept, bits 8-15 switches
 		dbg_printf("\n");
 	}
 	arm9_stateFlag = ARM9_SETSCFG;

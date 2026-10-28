@@ -185,6 +185,8 @@ extern void loadApFix(configuration* conf, const char* bootstrapPath, const char
 extern "C" int dscheevosHardcorePending(const configuration* conf);
 extern "C" int dscheevosSessionPending(const configuration* conf);
 extern "C" void dscheevosSanitizeSoftReset(const configuration* conf, const char* srParamsPath);
+extern "C" void dscheevosStage1Screen(const configuration* conf);
+extern "C" void dscheevosMark(const char* what);	// main.cpp
 // extern void loadApFixPostCardRead(configuration* conf, const char* bootstrapPath, const char* romTid, const u16 headerCRC);
 extern void loadMobiclipOffsets(configuration* conf, const char* bootstrapPath, const char* romTid, const u8 romVersion, const u16 headerCRC);
 extern void loadDSi2DSSavePatch(configuration* conf, const char* bootstrapPath, const char* romTid, const u8 romVersion, const u16 headerCRC);
@@ -757,7 +759,8 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 		iprintf("nitroFSInit failed!\n");
 		return -1;
 	}
-	
+	dscheevosMark("nitroFS up");
+
 	{
 		struct stat st;
 
@@ -1044,6 +1047,11 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 					|| (unitCode == 2 && conf->dsiMode && romTid[0] == 'K')));
 	if (conf->isDSiWare && (totalRomSize >= 0x04000000 || conf->dsiWareSlot1Mode || !scfgSdmmcEnabled || !isDSiMode())) {
 		conf->valueBits4 |= BIT(0);
+	}
+	dscheevosMark("ini and ROM header read");
+	if (isDSiMode() && !conf->b4dsMode && !colorTable) {
+		dscheevosStage1Screen(conf);	// a Cheevotron session's loading screen, from here to the game
+		dscheevosMark("loading screen up");
 	}
 	if (dscheevosSessionPending(conf)) {
 		// DScheevos: the player's speed-ups, chosen before launch, stay for the
@@ -1850,6 +1858,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 		}
 
 		// Load in-game menu ce9 binary
+		dscheevosMark("card engines loaded");
 		rc = loadCardEngineBinary("nitro:/cardenginei_arm9_igm.lz77", (u8*)igmText);
 		if (rc == 0) {
 			getIgmStrings(conf, false);
@@ -1997,6 +2006,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 
 		//bool wideCheatFound = (access(wideCheatFilePath.c_str(), F_OK) == 0);
 
+		dscheevosMark("in-game menu loaded");
 		FILE* bootstrapImages = fopen("nitro:/bootloader_images.lz77", "rb");
 		if (bootstrapImages) {
 			fread(lz77ImageBuffer, 1, sizeof_lz77ImageBuffer, bootstrapImages);
@@ -2661,6 +2671,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 		loadApFix(conf, bootstrapPath, romTid, headerCRC);
 		// loadApFixPostCardRead(conf, bootstrapPath, romTid, headerCRC);
 	}
+	dscheevosMark("AP-fix read");
 	loadMobiclipOffsets(conf, bootstrapPath, romTid, romVersion, headerCRC);
 
 	if (conf->loaderType < 2 && (strcmp(romTid, "NTRJ") == 0) && (headerCRC == 0x9B41 || headerCRC == 0x69D6)) { // Use bootloader2 for Shantae: Risky's Revenge (USA) (Review Build)
@@ -2906,6 +2917,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 	}
 
 	// Create RAM dump binary
+	dscheevosMark("patch offset cache checked");
 	createRamDumpBin(conf);
 
 	// Create AP-fixed overlay binary

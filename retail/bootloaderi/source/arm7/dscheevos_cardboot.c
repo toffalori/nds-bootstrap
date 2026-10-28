@@ -193,12 +193,14 @@ static void createEncryptedCommand(u8 command, u8* cmdData, u32 block) {
 	key1data.kkkkk += 1;
 }
 
+// Timer 2: timers 0 and 1 are the bootloader's boot clock (arm7_main), which
+// this delay stopped on timer 0, so the log's stamps lost time from here on.
 static void cardDelay(u16 readTimeout) {
-	TIMER_DATA(0) = 0 - (((readTimeout & 0x3FFF) + 3));
-	TIMER_CR(0) = TIMER_DIV_256 | TIMER_ENABLE;
-	while (TIMER_DATA(0) != 0xFFFF);
-	TIMER_CR(0) = 0;
-	TIMER_DATA(0) = 0;
+	TIMER_DATA(2) = 0 - (((readTimeout & 0x3FFF) + 3));
+	TIMER_CR(2) = TIMER_DIV_256 | TIMER_ENABLE;
+	while (TIMER_DATA(2) != 0xFFFF);
+	TIMER_CR(2) = 0;
+	TIMER_DATA(2) = 0;
 }
 
 int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {

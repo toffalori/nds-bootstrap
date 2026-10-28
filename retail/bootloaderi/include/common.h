@@ -73,6 +73,7 @@ extern bool arm9_boostVram;
 extern volatile bool arm9_brandScreen;
 extern volatile bool arm9_loadingScreenReady;
 extern volatile u32 arm9_screenTrace;
+extern volatile u32 arm9_stage1Ticks;
 extern u32 arm9_SCFG_EXT;
 extern u16 arm9_SCFG_CLK;
 extern volatile bool esrbScreenPrepared;

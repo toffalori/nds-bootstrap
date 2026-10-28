@@ -1,5 +1,5 @@
 // The Cheevotron launcher's console font, for nds-bootstrap's copy of its
-// loading screen (dscheevos_hooks.c): BlocksDS libnds graphics/default_font.png
+// loading screen (cheevotron_loading.h): BlocksDS libnds graphics/default_font.png
 // (zlib licence), ASCII 32-127, 8x8, one byte per row, bit 0 the leftmost pixel.
 #ifndef CHEEVOTRON_FONT_H
 #define CHEEVOTRON_FONT_H

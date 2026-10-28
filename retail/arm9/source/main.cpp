@@ -160,11 +160,58 @@ static void getSFCG_ARM7(void) {
 // clocks/access TWiLight Menu++ turns on).
 #define DSCHEEVOS_STAGE1_LOG "sd:/_nds/dscheevos/stage1.log"
 
+// The first stage's clock: ARM9 timers 2+3 cascaded at 32728 Hz (BUS_CLOCK /
+// 1024) from main(), as the launcher's log. The console clock (time()) stands
+// still here (this ARM7 never enables the RTC's interrupt), so it can't time
+// anything. The timers keep running through the hand-over: the bootloader's
+// ARM9 reads them at its start (main.arm9.c, logged in NDSBTSRP.LOG).
+static void dscheevosClockStart(void) {
+	TIMER_CR(2) = 0;
+	TIMER_CR(3) = 0;
+	TIMER_DATA(2) = 0;
+	TIMER_DATA(3) = 0;
+	TIMER_CR(3) = TIMER_ENABLE | TIMER_CASCADE;
+	TIMER_CR(2) = TIMER_ENABLE | TIMER_DIV_1024;
+}
+
+static unsigned long dscheevosMs(void) {
+	u16 hi, lo;
+	do {
+		hi = TIMER_DATA(3);
+		lo = TIMER_DATA(2);
+	} while (hi != TIMER_DATA(3));
+	return (unsigned long)((((u64)hi << 16) | lo) * 1000 / 32728);
+}
+
+// Steps timed without an SD write each (marks), written out with the next
+// log line.
+#define DSCHEEVOS_MARKS 24
+static struct { unsigned long ms; const char* what; } dscheevosMarks[DSCHEEVOS_MARKS];
+static int dscheevosMarkCount = 0;
+
+extern "C" void dscheevosMark(const char* what) {
+	if (dscheevosMarkCount < DSCHEEVOS_MARKS) {
+		dscheevosMarks[dscheevosMarkCount].ms = dscheevosMs();
+		dscheevosMarks[dscheevosMarkCount].what = what;
+		dscheevosMarkCount++;
+	}
+}
+
 void dscheevosStage1Log(const char* mode, const char* fmt, ...) {
+	static bool started = false;
+	const unsigned long ms = dscheevosMs();
 	FILE* f = fopen(DSCHEEVOS_STAGE1_LOG, mode);
 	if (!f) return;
-	const unsigned long s = (unsigned long)(time(NULL) % 86400);	// console clock, to line up with launcher.log
-	fprintf(f, "%02lu:%02lu:%02lu ", s / 3600, s / 60 % 60, s % 60);
+	if (!started) {
+		started = true;
+		const unsigned long s = (unsigned long)(time(NULL) % 86400);	// right at this stage's start, to line up with launcher.log
+		fprintf(f, "stage 1 at %02lu:%02lu:%02lu, ms since its start:\n", s / 3600, s / 60 % 60, s % 60);
+	}
+	for (int i = 0; i < dscheevosMarkCount; i++) {
+		fprintf(f, "%6lu stage1: %s\n", dscheevosMarks[i].ms, dscheevosMarks[i].what);
+	}
+	dscheevosMarkCount = 0;
+	fprintf(f, "%6lu ", ms);
 	va_list ap;
 	va_start(ap, fmt);
 	vfprintf(f, fmt, ap);
@@ -446,6 +493,7 @@ static int runNdsFile(configuration* conf) {
 	} else {
 		remove(logFilePath);
 	}
+	dscheevosMark("NDSBTSRP.LOG made");
 
 	dbg_printf("version: " VER_NUMBER "\n");
 	(dsiFeatures() && !conf->b4dsMode) ? debugConf(conf) : debugConfB4DS(conf);
@@ -629,6 +677,7 @@ static int runNdsFile(configuration* conf) {
 		clusterTwlFont = stTwlFont.st_ino;
 	}
 
+	dscheevosMark("files found, checking the session (ROM hash)");
 	if (dscheevosFindSession(conf) == DSCHEEVOS_SESSION_WRONG_ROM) {
 		myConsoleDemoInit();
 		iprintf("DScheevos: this game file isn't\nthe one the session was started\nfor. Achievements are off.\n");
@@ -644,6 +693,7 @@ static int runNdsFile(configuration* conf) {
 }
 
 int main(int argc, char** argv) {
+	dscheevosClockStart();
 	fifoSendValue32(FIFO_PM, PM_REQ_SLEEP_DISABLE);
 
 	configuration* conf = (configuration*)malloc(sizeof(configuration));
