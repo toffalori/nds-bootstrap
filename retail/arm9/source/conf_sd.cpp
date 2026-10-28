@@ -726,6 +726,7 @@ void getIgmStrings(configuration* conf, bool b4ds) {
 }
 
 void dscheevosStage1Log(const char* mode, const char* fmt, ...);	// main.cpp
+void dscheevosStage1LogTo(bool sd);	// main.cpp
 
 int loadFromSD(configuration* conf, const char *bootstrapPath) {
 	int rc = 0;
@@ -857,6 +858,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 	conf->bootstrapOnFlashcard = ((bootstrapPath[0] == 'f' && bootstrapPath[1] == 'a' && bootstrapPath[2] == 't') || !conf->sdFound);
 
 	load_conf(conf, conf->bootstrapOnFlashcard ? "fat:/_nds/nds-bootstrap.ini" : "sd:/_nds/nds-bootstrap.ini");
+	dscheevosStage1LogTo(conf->logging);	// DScheevos: stage1.log only with LOGGING = 1
 
 	conf->initDisc = (REG_SCFG_EXT == 0);
 

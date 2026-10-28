@@ -197,27 +197,66 @@ extern "C" void dscheevosMark(const char* what) {
 	}
 }
 
+// The log's text, kept in RAM until the ini says whether to log (LOGGING): an
+// SD write costs this stage tens of milliseconds each through its ARM7, and
+// the first one, creating the file, about a second. With LOGGING on, every
+// line then goes out at once (so a hang shows where); off, nothing is written.
+static char dscheevosLogText[4096];
+static int dscheevosLogLen = 0;
+static int dscheevosLogSd = -1;	// -1: not known yet, 0: off, 1: on
+#define DSCHEEVOS_STAGE1_LOG_MAX (64 * 1024)	// then it starts over
+
+static void dscheevosLogAppend(const char* fmt, va_list ap) {
+	const int room = (int)sizeof(dscheevosLogText) - dscheevosLogLen;
+	if (room <= 1) return;
+	const int n = vsnprintf(dscheevosLogText + dscheevosLogLen, room, fmt, ap);
+	if (n > 0) dscheevosLogLen += n < room ? n : room - 1;
+}
+
+static void dscheevosLogPrintf(const char* fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);
+	dscheevosLogAppend(fmt, ap);
+	va_end(ap);
+}
+
+static void dscheevosStage1Flush(void) {
+	if (dscheevosLogSd != 1 || dscheevosLogLen == 0) return;
+	struct stat st;
+	const bool big = stat(DSCHEEVOS_STAGE1_LOG, &st) == 0 && st.st_size > DSCHEEVOS_STAGE1_LOG_MAX;
+	FILE* f = fopen(DSCHEEVOS_STAGE1_LOG, big ? "w" : "a");	// appending is cheap; creating isn't
+	if (!f) return;
+	fwrite(dscheevosLogText, 1, dscheevosLogLen, f);
+	fclose(f);
+	dscheevosLogLen = 0;
+}
+
+// After the ini is read: write the log from now on (LOGGING = 1), or never.
+void dscheevosStage1LogTo(bool sd) {
+	dscheevosLogSd = sd ? 1 : 0;
+	if (sd) dscheevosStage1Flush();
+}
+
 void dscheevosStage1Log(const char* mode, const char* fmt, ...) {
+	(void)mode;	// lines are appended; the file starts over past DSCHEEVOS_STAGE1_LOG_MAX
 	static bool started = false;
 	const unsigned long ms = dscheevosMs();
-	FILE* f = fopen(DSCHEEVOS_STAGE1_LOG, mode);
-	if (!f) return;
 	if (!started) {
 		started = true;
 		const unsigned long s = (unsigned long)(time(NULL) % 86400);	// right at this stage's start, to line up with launcher.log
-		fprintf(f, "stage 1 at %02lu:%02lu:%02lu, ms since its start:\n", s / 3600, s / 60 % 60, s % 60);
+		dscheevosLogPrintf("stage 1 at %02lu:%02lu:%02lu, ms since its start:\n", s / 3600, s / 60 % 60, s % 60);
 	}
 	for (int i = 0; i < dscheevosMarkCount; i++) {
-		fprintf(f, "%6lu stage1: %s\n", dscheevosMarks[i].ms, dscheevosMarks[i].what);
+		dscheevosLogPrintf("%6lu stage1: %s\n", dscheevosMarks[i].ms, dscheevosMarks[i].what);
 	}
 	dscheevosMarkCount = 0;
-	fprintf(f, "%6lu ", ms);
+	dscheevosLogPrintf("%6lu ", ms);
 	va_list ap;
 	va_start(ap, fmt);
-	vfprintf(f, fmt, ap);
+	dscheevosLogAppend(fmt, ap);
 	va_end(ap);
-	fputc('\n', f);
-	fclose(f);
+	dscheevosLogPrintf("\n");
+	dscheevosStage1Flush();
 }
 
 // The same, for the C files (nds_loader_arm9.c)
@@ -479,17 +518,38 @@ static int runNdsFile(configuration* conf) {
 	// Logging
 	const char *logFilePath = (conf->sdFound && !conf->b4dsMode ? "sd:/NDSBTSRP.LOG" : "fat:/NDSBTSRP.LOG");
 	if (conf->logging) {
-		static FILE* loggingFile = fopen(logFilePath, "w");
-		fprintf(loggingFile, "LOGGING MODE\n");
-		fclose(loggingFile);
-
-		// Create a big file (minimal sdengine libfat cannot append to a file)
-		loggingFile = fopen(logFilePath, "a");
-		for (int i = 0; i < 1000; i++) {
-			fprintf(loggingFile, "                                                                                                                                          \n");
+		// DScheevos: a log file of the right size is blanked in place, its
+		// first 300 lines (a boot logs about 150), instead of truncated,
+		// allocated again and written whole: that took 1.7 s on a DSi.
+		enum { LOG_LINE = 139, LOG_LINES = 1000, LOG_HEAD = 13 };
+		struct stat stLog;
+		FILE* inPlace = NULL;
+		if (stat(logFilePath, &stLog) == 0 && stLog.st_size == LOG_HEAD + LOG_LINE * LOG_LINES) {
+			inPlace = fopen(logFilePath, "r+");
 		}
+		if (inPlace) {
+			static char blank[LOG_LINE * 30];
+			for (int i = 0; i < (int)sizeof(blank); i++) {
+				blank[i] = (i % LOG_LINE == LOG_LINE - 1) ? '\n' : ' ';
+			}
+			fwrite("LOGGING MODE\n", 1, LOG_HEAD, inPlace);
+			for (int i = 0; i < 10; i++) {
+				fwrite(blank, 1, sizeof(blank), inPlace);
+			}
+			fclose(inPlace);
+		} else {
+			static FILE* loggingFile = fopen(logFilePath, "w");
+			fprintf(loggingFile, "LOGGING MODE\n");
+			fclose(loggingFile);
 
-		fclose(loggingFile);
+			// Create a big file (minimal sdengine libfat cannot append to a file)
+			loggingFile = fopen(logFilePath, "a");
+			for (int i = 0; i < 1000; i++) {
+				fprintf(loggingFile, "                                                                                                                                          \n");
+			}
+
+			fclose(loggingFile);
+		}
 	} else {
 		remove(logFilePath);
 	}
