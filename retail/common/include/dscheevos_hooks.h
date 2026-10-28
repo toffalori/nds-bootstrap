@@ -66,7 +66,7 @@
 #define DSCHEEVOS_S_AP_SECURITY   0x238 // u8: 3 = WPA2
 #define DSCHEEVOS_S_PMK_VALID     0x23B // u8, set here in RAM only
 #define DSCHEEVOS_S_PMK           0x23C // u8[32], filled here in RAM only
-#define DSCHEEVOS_S_BOOT_SIZE     0x25C
+#define DSCHEEVOS_S_BOOT_SIZE     0x260
 #define DSCHEEVOS_AP_WPA2         3
 #define DSCHEEVOS_BOOT_SPECTATOR  0x01  // evaluate and show, send nothing
 #define DSCHEEVOS_BOOT_STREAM     0x04  // Cheevotron: stream RAM to the phone, no on-console placard
