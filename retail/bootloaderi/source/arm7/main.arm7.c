@@ -316,16 +316,12 @@ static void resetMemory_ARM7(void) {
 		DMA_CR(i) = 0;
 		DMA_SRC(i) = 0;
 		DMA_DEST(i) = 0;
-		TIMER_CR(i) = 0;
-		TIMER_DATA(i) = 0;
+		if (i >= 2) {   // DScheevos: timers 0+1 are the boot clock (arm7_main)
+			TIMER_CR(i) = 0;
+			TIMER_DATA(i) = 0;
+		}
 		for(reg=0; reg<0x1c; reg+=4)*((vu32*)(0x04004104 + ((i*0x1c)+reg))) = 0;//Reset NDMA.
 	}
-	// DScheevos: a boot clock for the log (timers 0+1 cascaded, 32768 Hz),
-	// stopped again right before the game starts
-	TIMER_DATA(0) = 0;
-	TIMER_DATA(1) = 0;
-	TIMER_CR(0) = TIMER_ENABLE | TIMER_DIV_1024;
-	TIMER_CR(1) = TIMER_ENABLE | TIMER_CASCADE;
 
 	REG_RCNT = 0;
 
@@ -1778,10 +1774,20 @@ bool buttonsRemapped(void) {
 int arm7_main(void) {
 	nocashMessage("bootloader");
 
+	// DScheevos: a boot clock for the log (timers 0+1 cascaded, 32768 Hz) from
+	// the bootloader's first step, stopped again right before the game starts
+	TIMER_CR(0) = 0;
+	TIMER_CR(1) = 0;
+	TIMER_DATA(0) = 0;
+	TIMER_DATA(1) = 0;
+	TIMER_CR(0) = TIMER_ENABLE | TIMER_DIV_1024;
+	TIMER_CR(1) = TIMER_ENABLE | TIMER_CASCADE;
+
 	initMBK();
 
 	// Wait for ARM9 to at least start
 	while (arm9_stateFlag < ARM9_START);
+	u32 arm9StartTicks = ((u32)TIMER_DATA(1) << 16) | TIMER_DATA(0);   // for the log, once it is open
 
 	// Get ARM7 to clear RAM
 	nocashMessage("Getting ARM7 to clear RAM...\n");
@@ -1868,9 +1874,15 @@ int arm7_main(void) {
 	dbg_printf("Loading the NDS file...\n");
 
 	//bool dsiModeConfirmed;
+	if (dscheevosWanted()) {
+		dbg_printf("DScheevos: ARM9 started after ");
+		dbg_hexa(arm9StartTicks);   // 32768 Hz ticks from the bootloader's first step
+		dbg_printf(" ticks\n");
+	}
 	dscheevosCartMode = dscheevosBootFromCart();
-	arm9_holdWhite = dscheevosStream();   // Cheevotron: white until the game (main.arm9.c)
-	dscheevosLoadingScreen();              // and on it, a copy of the launcher's screen
+	arm9_brandScreen = !dscheevosStream();   // Cheevotron: white until the game (main.arm9.c)
+	dscheevosLoadingScreen();                // and on it, a copy of the launcher's screen
+	dscheevosStamp("loading screen drawn");
 	if (dscheevosCartMode) {
 		loadBinary_ARM7_cart(&dsiHeaderTemp, romFile);
 	} else {

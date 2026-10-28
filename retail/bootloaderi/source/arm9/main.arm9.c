@@ -60,8 +60,10 @@ bool arm9_boostVram = false;
 // Cheevotron: hold both screens white while loading, so the start goes from the
 // launcher's Cheevotron screen through white (the loaders) straight to the game,
 // with no brand screen in between. White until the ARM7 knows the session is no
-// Cheevotron stream session (then the DScheevos brand screen shows).
-volatile bool arm9_holdWhite = true;
+// Cheevotron stream session (then the DScheevos brand screen shows). White is
+// the zero value on purpose: a stale cache line of the program before once
+// zeroed this variable before the ARM9 read it (crt0.arm9.s).
+volatile bool arm9_brandScreen = false;
 // What the loading screen did, for the ARM7's log: bit 0 the white flag at the
 // wait loop's first pass, bit 1 the brand screen was put up, bits 8-15 switches
 // between the two.
@@ -175,7 +177,7 @@ static void __attribute__((noinline)) placardTick(void) {
 // 8 bpp; dscheevos_hooks.c, dscheevosLoadingScreen).
 volatile bool arm9_loadingScreenReady = false;
 
-// Cheevotron loading screen (arm9_holdWhite): white, then the ARM7's copy of
+// Cheevotron loading screen (arm9_brandScreen false): white, then the ARM7's copy of
 // the launcher's screen with its "Loading..." dots kept moving, so a slow
 // start doesn't look like a hang. This code runs from arm9ram alone: only
 // immediate constants and plain loops, no tables and no division (check_arm9.sh).
@@ -330,7 +332,7 @@ void arm9_main(void) {
 	{
 		u16 c = RGB15(2, 3, 9);
 #ifndef LOADERTYPE2
-		if (arm9_holdWhite) {   // Cheevotron (until the ARM7 says otherwise): white from the first frame
+		if (!arm9_brandScreen) {   // Cheevotron (until the ARM7 says otherwise): white from the first frame
 			c = RGB15(31, 31, 31);
 			BG_PALETTE[0] = c;
 			BG_PALETTE_SUB[0] = c;
@@ -356,7 +358,7 @@ void arm9_main(void) {
 
 	// Set ARM9 state to ready and wait for it to change again
 	arm9_stateFlag = ARM9_READY;
-	bool whiteShown = false;   // the Cheevotron loading screen is up (arm9_holdWhite)
+	bool whiteShown = false;   // the Cheevotron loading screen is up (not arm9_brandScreen)
 	bool screensCleared = false;   // ARM9_SCRNCLR ran: the screens are the game's now
 #ifndef LOADERTYPE2
 	bool loadingShown = false;   // the ARM7's loading screen is in VRAM_E
@@ -378,10 +380,10 @@ void arm9_main(void) {
 #ifndef LOADERTYPE2
 			if (!tracedFirst) {
 				tracedFirst = true;
-				arm9_screenTrace |= arm9_holdWhite ? 1 : 0;
+				arm9_screenTrace |= arm9_brandScreen ? 0 : 1;
 			}
-			if (arm9_holdWhite != whiteShown) {
-				whiteShown = arm9_holdWhite;
+			if (arm9_brandScreen == whiteShown) {
+				whiteShown = !arm9_brandScreen;
 				arm9_screenTrace += 0x100;
 				const u32 fill = whiteShown ? 0 : 0x01010101;   // white, or the brand colour
 				dmaFill9(fill, (void*)0x06000000, 0x10000);   // VRAM_E, 64 KB
@@ -427,7 +429,7 @@ void arm9_main(void) {
 				if (bottomScreenFadedIn) {
 					screens |= BIT(1);
 				}
-				if (!arm9_holdWhite) {   // white already: a fade would flash the screens' content
+				if (arm9_brandScreen) {   // white already: a fade would flash the screens' content
 					fadeOut(screens);
 				}
 #ifndef LOADERTYPE2

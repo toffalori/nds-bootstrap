@@ -6,6 +6,19 @@
 @---------------------------------------------------------------------------------
 _arm9_start:
 @---------------------------------------------------------------------------------
+	@ DScheevos: drop the program before's cached copies of this region. The ARM7
+	@ copied this code and data here past the ARM9's data cache, and the program
+	@ before (nds-bootstrap's first stage) runs with the cache on: a dirty line of
+	@ its own data at these addresses, written back by arm9_clearCache, put zeros
+	@ over our variables (the loading screen flag read false at its first pass).
+	ldr	r0, =__arm9_start
+	ldr	r1, =__arm9ram_top
+1:
+	mcr	p15, 0, r0, c7, c6, 1	@ invalidate the data cache line, no write-back
+	add	r0, r0, #32
+	cmp	r0, r1
+	blo	1b
+
 	mov	r0, #0x04000000		@ IME = 0;
 	add	r0, r0, #0x208
 	strh	r0, [r0]

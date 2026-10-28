@@ -361,6 +361,11 @@ int runNds(u32 cluster, u32 saveCluster, u32 donorTwlCluster, /* u32 gbaCluster,
 		}
 	}
 
+	if (isDSiMode()) {
+		extern void dscheevosStage1LogLine(const char* line);	// main.cpp
+		dscheevosStage1LogLine("stage1: loader in VRAM, resetting into it");
+	}
+
 	// Give the VRAM to the ARM7
 	nocashMessage("Give the VRAM to the ARM7");
 	VRAM_C_CR = VRAM_ENABLE | VRAM_C_ARM7_0x06000000;

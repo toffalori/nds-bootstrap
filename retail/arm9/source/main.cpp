@@ -173,6 +173,11 @@ void dscheevosStage1Log(const char* mode, const char* fmt, ...) {
 	fclose(f);
 }
 
+// The same, for the C files (nds_loader_arm9.c)
+extern "C" void dscheevosStage1LogLine(const char* line) {
+	dscheevosStage1Log("a", "%s", line);
+}
+
 // fifoWaitValue32(FIFO_USER_05), but logs where the ARM7 is if it takes
 // longer than 5 s. Counts frames from VCOUNT: no IRQ is needed.
 static void dscheevosWaitArm7(void) {
