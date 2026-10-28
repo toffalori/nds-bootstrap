@@ -2797,6 +2797,11 @@ int arm7_main(void) {
 	i2cReadRegister(0x4A, 0x10);	// Clear accidential POWER button press
 
 	dscheevosStamp("screens cleared");
+	if (dscheevosWanted()) {
+		dbg_printf("DScheevos: loading screen trace ");
+		dbg_hexa(arm9_screenTrace);   // bit 0 white at the start, bit 1 brand screen shown, bits 8-15 switches
+		dbg_printf("\n");
+	}
 	arm9_stateFlag = ARM9_SETSCFG;
 	while (arm9_stateFlag != ARM9_READY) {};
 	dscheevosStamp("SCFG set");

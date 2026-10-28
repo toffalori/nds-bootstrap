@@ -62,6 +62,10 @@ bool arm9_boostVram = false;
 // with no brand screen in between. White until the ARM7 knows the session is no
 // Cheevotron stream session (then the DScheevos brand screen shows).
 volatile bool arm9_holdWhite = true;
+// What the loading screen did, for the ARM7's log: bit 0 the white flag at the
+// wait loop's first pass, bit 1 the brand screen was put up, bits 8-15 switches
+// between the two.
+volatile u32 arm9_screenTrace = 0;
 u32 arm9_SCFG_EXT = 0;
 u16 arm9_SCFG_CLK = 0;
 volatile bool esrbScreenPrepared = false;
@@ -324,7 +328,15 @@ void arm9_main(void) {
 	REG_POWERCNT = BIT(0) | BIT(9) | BIT(15); // POWER_LCD | POWER_2D_B | POWER_SWAP_LCDS
 
 	{
-		const u16 c = RGB15(2, 3, 9);
+		u16 c = RGB15(2, 3, 9);
+#ifndef LOADERTYPE2
+		if (arm9_holdWhite) {   // Cheevotron (until the ARM7 says otherwise): white from the first frame
+			c = RGB15(31, 31, 31);
+			BG_PALETTE[0] = c;
+			BG_PALETTE_SUB[0] = c;
+			REG_POWERCNT |= BIT(1);   // engine A on, or the top screen shows black
+		}
+#endif
 		BG_PALETTE[1] = c;
 		BG_PALETTE_SUB[1] = c;
 		dmaFill9(0x01010101, (void*)0x06000000, 0x10000);   // top: VRAM_E BG3 8bpp
@@ -348,6 +360,7 @@ void arm9_main(void) {
 	bool screensCleared = false;   // ARM9_SCRNCLR ran: the screens are the game's now
 #ifndef LOADERTYPE2
 	bool loadingShown = false;   // the ARM7's loading screen is in VRAM_E
+	bool tracedFirst = false;
 	u16 lastVcount = 0;
 	int dotFrames = 0;
 	int dots = 3;
@@ -363,14 +376,20 @@ void arm9_main(void) {
 			REG_DISPCNT_SUB = MODE_3_2D | DISPLAY_BG3_ACTIVE;
 			REG_BG3CNT_SUB = (u16)BgSize_B8_256x256;
 #ifndef LOADERTYPE2
+			if (!tracedFirst) {
+				tracedFirst = true;
+				arm9_screenTrace |= arm9_holdWhite ? 1 : 0;
+			}
 			if (arm9_holdWhite != whiteShown) {
 				whiteShown = arm9_holdWhite;
+				arm9_screenTrace += 0x100;
 				const u32 fill = whiteShown ? 0 : 0x01010101;   // white, or the brand colour
 				dmaFill9(fill, (void*)0x06000000, 0x10000);   // VRAM_E, 64 KB
 				dmaFill9(fill, BG_GFX_SUB, 0xC000);           // VRAM_H+I, 48 KB
 				if (!whiteShown) {   // not a Cheevotron session: the DScheevos brand screen
 					BG_PALETTE[0] = BG_PALETTE_SUB[0] = 0;
 					BG_PALETTE[1] = BG_PALETTE_SUB[1] = RGB15(2, 3, 9);
+					arm9_screenTrace |= 2;
 				}
 			}
 			if (whiteShown) {
@@ -411,6 +430,14 @@ void arm9_main(void) {
 				if (!arm9_holdWhite) {   // white already: a fade would flash the screens' content
 					fadeOut(screens);
 				}
+#ifndef LOADERTYPE2
+				else {
+					// display off shows white: clearing the palettes and VRAM below
+					// would otherwise show a black frame first
+					REG_DISPCNT = 0;
+					REG_DISPCNT_SUB = 0;
+				}
+#endif
 				dmaFill9(0, BG_PALETTE, 2*1024);
 				dmaFill9(0, VRAM_A, 0x18000);		// Bank A
 				dmaFill9(0, BG_GFX_SUB, 0xC000);		// Bank H-I
