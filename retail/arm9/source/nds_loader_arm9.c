@@ -27,6 +27,7 @@
 #include <nds/memory.h>
 #include <nds/system.h>
 #include <nds/bios.h>
+#include <nds/arm9/cache.h>
 
 //#include <nds/arm9/dldi.h>
 #include <nds/debug.h>
@@ -342,6 +343,13 @@ int runNds(u32 cluster, u32 saveCluster, u32 donorTwlCluster, /* u32 gbaCluster,
 	loader->dscheevosSessionCluster     = conf->dscheevosSessionCluster;
 	loader->dscheevosPendingCluster     = conf->dscheevosPendingCluster;
 
+	if (isDSiMode()) {
+		// the last SD write: DSi SD access goes through the ARM7 and needs the
+		// FIFO interrupt, which is off from here on (a log line below hung here)
+		extern void dscheevosStage1LogLine(const char* line);	// main.cpp
+		dscheevosStage1LogLine("stage1: loader read, resetting into it");
+	}
+
 	nocashMessage("irqDisable(IRQ_ALL);");
 	irqDisable(IRQ_ALL);
 
@@ -361,10 +369,10 @@ int runNds(u32 cluster, u32 saveCluster, u32 donorTwlCluster, /* u32 gbaCluster,
 		}
 	}
 
-	if (isDSiMode()) {
-		extern void dscheevosStage1LogLine(const char* line);	// main.cpp
-		dscheevosStage1LogLine("stage1: loader in VRAM, resetting into it");
-	}
+	// DScheevos: write back and drop the data cache now. Left dirty, our lines
+	// for the bootloader's ARM9 area were written back over its code and data
+	// after the ARM7 copied them there (its loading screen flag read zero).
+	DC_FlushAll();
 
 	// Give the VRAM to the ARM7
 	nocashMessage("Give the VRAM to the ARM7");
