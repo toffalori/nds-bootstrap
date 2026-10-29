@@ -21,14 +21,19 @@
 #include "common.h"
 #include "value_bits.h"
 #include "dscheevos_hooks.h"
+#include "dscm_record.h"
 #include "locations.h"
 #include "igm_text.h"
 #include "cheevotron_loading.h"
+#include "dscheevos_cardboot.h"
 
 extern void readFirmware(u32 address, void* destination, u32 size); // libnds/firmware.c
+extern u32 FAT_NextCluster(u32 cluster, const bool boolCard2);     // my_fat.c
+extern int discBytePerClus[2];
 extern u32 dscheevosModuleCluster;
 extern u32 dscheevosSessionCluster;
 extern u32 dscheevosPendingCluster;
+extern u32 dscheevosRecordCluster;
 extern u32 iUncompressedSize;
 extern u32 pageFileCluster;
 extern u8 bootstrapOnFlashcard;
@@ -364,6 +369,79 @@ static void disable(const char* why) {
 	dbg_printf("\n");
 }
 
+// Cheevotron stream sessions: claim a slot of recording.bin for this run, for
+// the card engine's copy of the streamer's recording (dscm_record.h,
+// cardenginei/arm7 dscheevos_record.c). The file must be in one piece on the
+// card: the card engine writes its sectors by number, with no FAT in sight.
+// Takes the slot that holds no recording the phone still wants, writes its
+// header as the claim (the next seq, the game, no data yet) and tells the
+// card engine where it is. Without a file, or a fragmented one, play goes on
+// with no copy (the ring in RAM still serves a replay during the run).
+static void dscheevosRecordSetup(cardengineArm7* ce7) {
+	static u32 sector[DSCM_REC_SECTOR_BYTES / 4];
+	ce7->dscheevosRecordSector = 0;
+	if (!dscheevosStream() || !dscheevosRecordCluster) {
+		return;
+	}
+	aFile file;
+	getFileFromCluster(&file, dscheevosRecordCluster, false);
+	fileRead((char*)sector, &file, 0, DSCM_REC_SECTOR_BYTES);
+	const dscm_recfile_t* f = (const dscm_recfile_t*)sector;
+	if (f->magic != DSCM_RECFILE_MAGIC || f->version != DSCM_RECFILE_VERSION
+	 || f->data_sectors != DSCM_REC_DATA_SECTORS || f->slots != DSCM_REC_SLOTS) {
+		dbg_printf("DScheevos: recording.bin isn't the layout this knows, no copy\n");
+		return;
+	}
+	char code[4], title[12], hash[32];
+	tonccpy(code, f->game_code, sizeof(code));
+	tonccpy(title, f->title, sizeof(title));
+	tonccpy(hash, f->game_hash, sizeof(hash));
+
+	const u32 bytesPerClus = (u32)discBytePerClus[0];
+	const u32 clusters = (DSCM_REC_FILE_SIZE + bytesPerClus - 1) / bytesPerClus;
+	u32 c = dscheevosRecordCluster;
+	for (u32 i = 1; i < clusters; i++) {
+		const u32 n = FAT_NextCluster(c, false);
+		if (n != c + 1) {
+			dbg_printf("DScheevos: recording.bin is fragmented, no copy\n");
+			return;
+		}
+		c = n;
+	}
+
+	dscm_recslot_t s[DSCM_REC_SLOTS];
+	for (u32 i = 0; i < DSCM_REC_SLOTS; i++) {
+		fileRead((char*)&s[i], &file, DSCM_REC_SLOT_SECTOR(i) * DSCM_REC_SECTOR_BYTES, sizeof(s[i]));
+	}
+	const int slot = dscm_rec_pick_slot(&s[0], &s[1]);
+	const u32 seq = dscm_rec_next_seq(&s[0], &s[1]);
+
+	toncset(sector, 0, sizeof(sector));
+	dscm_recslot_t* h = (dscm_recslot_t*)sector;
+	h->magic = DSCM_RECSLOT_MAGIC;
+	h->size = sizeof(*h);
+	h->seq = seq;
+	h->flags = DSCM_RECSLOT_CLAIMED;
+	tonccpy(h->game_code, code, sizeof(h->game_code));
+	tonccpy(h->title, title, sizeof(h->title));
+	tonccpy(h->game_hash, hash, sizeof(h->game_hash));
+	h->data_sectors = DSCM_REC_DATA_SECTORS;
+	fileWrite((const char*)sector, &file, DSCM_REC_SLOT_SECTOR(slot) * DSCM_REC_SECTOR_BYTES, DSCM_REC_SECTOR_BYTES);
+
+	ce7->dscheevosRecordDataSectors = DSCM_REC_DATA_SECTORS;
+	ce7->dscheevosRecordSeq = seq;
+	tonccpy(ce7->dscheevosRecordTitle, title, sizeof(ce7->dscheevosRecordTitle));
+	tonccpy(ce7->dscheevosRecordCode, code, sizeof(ce7->dscheevosRecordCode));
+	ce7->dscheevosRecordSector = FAT_ClustToSect(dscheevosRecordCluster, false) + DSCM_REC_SLOT_SECTOR(slot);
+	dbg_printf("DScheevos: recording slot ");
+	dbg_hexa(slot);
+	dbg_printf(" claimed, seq ");
+	dbg_hexa(seq);
+	dbg_printf(", header sector ");
+	dbg_hexa(ce7->dscheevosRecordSector);
+	dbg_printf(dscm_recslot_holds(&s[slot ^ 1]) ? ", the other slot holds a run the phone hasn't replayed\n" : "\n");
+}
+
 // session.used keeps its clusters; once the session is in RAM its contents
 // are zeroed, so the file can't be booted again (and the login token in it
 // doesn't stay on the SD card).
@@ -414,6 +492,15 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 	fillPmk((u8*)session);
 	// the speed the player chose before launch, for the module's status and journal
 	((u8*)session)[DSCHEEVOS_S_CLOCK] = (boostCpu ? DSCHEEVOS_CLOCK_CPU_133 : 0) | (boostVram ? DSCHEEVOS_CLOCK_VRAM : 0);
+	// Cart mode: the launcher can't hash a cartridge (KEY1 is the bootloader's),
+	// so the session comes with no hash and loadBinary_ARM7_cart computed it
+	// from the card; the module's HELLO carries it from here.
+	if (dscheevosBootFromCart()) {
+		tonccpy((u8*)session + DSCHEEVOS_S_GAME_HASH, DSCM_CART_HASH, 33);
+		dbg_printf("DScheevos cart: session hash ");
+		dbg_printf((const char*)session + DSCHEEVOS_S_GAME_HASH);
+		dbg_printf("\n");
+	}
 
 	if (patchOsHalt(ndsHeader, header[DSCHEEVOS_H_HALT / 4]) == 0) {
 		disable("no OS_Halt");
@@ -423,6 +510,8 @@ void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* 
 
 	header[DSCHEEVOS_H_VBLANK_COUNT / 4] = 0;
 	ce7->dscheevosPendingCluster = dscheevosPendingCluster;
+	dscheevosRecordSetup(ce7);
+	dscheevosStamp("recording slot claimed");
 	ce7->valueBits |= DSCHEEVOS_VALUEBIT;
 	ce9->valueBits |= DSCHEEVOS_VALUEBIT;
 

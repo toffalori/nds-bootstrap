@@ -186,6 +186,7 @@ extern "C" int dscheevosHardcorePending(const configuration* conf);
 extern "C" int dscheevosSessionPending(const configuration* conf);
 extern "C" void dscheevosSanitizeSoftReset(const configuration* conf, const char* srParamsPath);
 extern "C" void dscheevosStage1Screen(const configuration* conf);
+extern "C" void dscheevosCartPaths(configuration* conf);
 extern "C" void dscheevosMark(const char* what);	// main.cpp
 // extern void loadApFixPostCardRead(configuration* conf, const char* bootstrapPath, const char* romTid, const u16 headerCRC);
 extern void loadMobiclipOffsets(configuration* conf, const char* bootstrapPath, const char* romTid, const u8 romVersion, const u16 headerCRC);
@@ -368,6 +369,9 @@ static void load_conf(configuration* conf, const char* fn) {
 
 	// PRV path
 	conf->prvPath = strdup(config_file.fetch("NDS-BOOTSTRAP", "PRV_PATH").c_str());
+
+	// Cheevotron cart mode: the ROM and save paths are the cartridge's (dscheevos_session.c)
+	dscheevosCartPaths(conf);
 
 	// Banner SAV path
 	conf->bnrPath = strdup(config_file.fetch("NDS-BOOTSTRAP", "BNR_PATH").c_str());

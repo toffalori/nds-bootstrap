@@ -135,6 +135,13 @@ typedef struct cardengineArm7 {
 	u32 romMapLines;
 	u32 romMap[8][3]; // 0: ROM part start, 1: ROM part start in RAM, 2: ROM part end in RAM
 	u32 dscheevosPendingCluster; // DScheevos journal file; set only when DScheevos is on (not in the DSiWare engine's header)
+	// Cheevotron: the slot of recording.bin claimed for this run (dscm_record.h), for the ARM7's mirror of the
+	// streamer's recording (dscheevos_record.c); set by the bootloader (dscheevos_hooks.c), 0 = no mirror
+	u32 dscheevosRecordSector;      // the slot's header sector on the SD card
+	u32 dscheevosRecordDataSectors; // data sectors after it
+	u32 dscheevosRecordSeq;         // the claim's seq
+	char dscheevosRecordTitle[12];  // the game, for the slot's header
+	char dscheevosRecordCode[4];
 } cardengineArm7;
 
 //

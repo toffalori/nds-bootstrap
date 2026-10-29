@@ -101,6 +101,7 @@ typedef struct configuration {
 	u32 dscheevosModuleCluster;
 	u32 dscheevosSessionCluster;
 	u32 dscheevosPendingCluster;
+	u32 dscheevosRecordCluster;	// Cheevotron: recording.bin, the ARM7's copy of the streamer's recording (stream sessions)
 } configuration;
 
 #endif // CONFIGURATION_H

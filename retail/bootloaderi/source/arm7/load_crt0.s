@@ -75,6 +75,7 @@
 	.global dscheevosModuleCluster
 	.global dscheevosSessionCluster
 	.global dscheevosPendingCluster
+	.global dscheevosRecordCluster
 	.global manualCluster
 	.global sharedFontCluster
 	.global dldiPatchBinaryOffset
@@ -268,6 +269,8 @@ dscheevosModuleCluster:
 dscheevosSessionCluster:
 	.word	0x00000000
 dscheevosPendingCluster:
+	.word	0x00000000
+dscheevosRecordCluster:
 	.word	0x00000000
 .align 4
 

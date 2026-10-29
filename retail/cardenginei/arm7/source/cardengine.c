@@ -46,6 +46,7 @@
 #include "dscheevos_hooks.h"
 #ifndef TWLSDK
 #include "shim.h"
+#include "dscheevos_record.h"
 #endif
 
 #ifndef TWLSDK
@@ -2091,6 +2092,9 @@ static void dscheevosVBlank(void) {
 	const u16 powerUs = (powcnt2 & BIT(1)) ? *(vu16*)0x04808036 : 1;
 	const bool gameWifi = (powcnt2 & BIT(1)) && !(powerUs & BIT(0));
 	dscheevosNetPoll(powcnt2, powerUs, gameWifi);
+	// Cheevotron: the streamer's recording onto the SD card, a sector a VBlank at
+	// most (dscheevos_record.c); never next to a ROM read or a save
+	dscheevosRecordVBlank(&saveMutex, readOngoing);
 
 	if ((valueBits & i2cBricked) || consoleModel >= 2 || romRead_LED == 1 || dmaRomRead_LED == 1) {
 		return;
@@ -2106,11 +2110,13 @@ static void dscheevosVBlank(void) {
 // commands now would break it, so: finishRead (the game is ending) completes
 // it first and leaves sharedAddr[3] set, so the ARM9 keeps waiting; otherwise
 // (in-game menu) skip, and a later safe point writes the journal.
+// The same safe points put the streamer's recording's copy on the SD card up
+// to date (Cheevotron, dscheevos_record.c): the caller holds saveMutex.
 extern u32 dscheevosPendingCluster;
 static bool dscheevosJournalPadded = false;
 
 void dscheevosJournalWrite(bool finishRead) {
-	if (!(valueBits & DSCHEEVOS_VALUEBIT) || !dscheevosPendingCluster
+	if (!(valueBits & DSCHEEVOS_VALUEBIT)
 	 || *(vu32*)(DSCHEEVOS_LOCATION + DSCHEEVOS_H_MAGIC) != DSCHEEVOS_MAGIC) {
 		return;
 	}
@@ -2119,6 +2125,10 @@ void dscheevosJournalWrite(bool finishRead) {
 			return;
 		}
 		while (!resume_cardRead_arm9());
+	}
+	dscheevosRecordFlush();
+	if (!dscheevosPendingCluster) {
+		return;
 	}
 	const DScheevosJournal* journal = *(DScheevosJournal* volatile*)(DSCHEEVOS_LOCATION + DSCHEEVOS_H_JOURNAL);
 	if ((u32)journal < DSCHEEVOS_LOCATION || (u32)journal + sizeof(DScheevosJournal) > DSCHEEVOS_LOCATION + DSCHEEVOS_SIZE

@@ -15,6 +15,7 @@
 #include <time.h>
 #include "configuration.h"
 #include "dscheevos_hooks.h"
+#include "dscm_record.h"
 #include "cheevotron_loading.h"
 
 #define DSCHEEVOS_DIR "sd:/_nds/dscheevos/"
@@ -60,6 +61,36 @@ static int readSession(const configuration* conf, u32* head, struct stat* stModu
 	 && head[DSCHEEVOS_S_FILE_SIZE / 4] == (u32)stSession->st_size
 	 && strncmp(romPath, conf->ndsPath, 256) == 0
 	 && age >= -DSCHEEVOS_SESSION_MAX_AHEAD && age <= DSCHEEVOS_SESSION_MAX_AGE;
+}
+
+// Cheevotron cart mode: the game is the cartridge in the slot, and the ini's
+// NDS_PATH (TWiLight Menu++'s last SD game) has nothing to do with it. The
+// launcher reads the cartridge's header and writes it to a small file of its
+// own, named in the session as the ROM: everything the first stage takes from
+// a ROM file (game code, unit code, version, header CRC for the built-in
+// AP-fix, DSi flags) then comes from the card. The save path moves with it:
+// a cartridge keeps its save on its own chip, so no SD save file is used,
+// and the ini's SAV_PATH (the SD game's save) stays untouched. Called right
+// after the ini is read, before anything opens the ROM.
+void dscheevosCartPaths(configuration* conf) {
+	u32 head[DSCHEEVOS_SESSION_HEAD / 4];
+	FILE* f = fopen(DSCHEEVOS_DIR "session.bin", "rb");
+	if (!f) {
+		return;
+	}
+	const size_t got = fread(head, 1, DSCHEEVOS_SESSION_HEAD, f);
+	fclose(f);
+	const char* romPath = (const char*)head + DSCHEEVOS_S_ROM_PATH;
+	if (got != DSCHEEVOS_SESSION_HEAD || head[0] != DSCHEEVOS_SESSION_MAGIC
+	 || !(((const u8*)head)[DSCHEEVOS_S_FLAGS] & DSCHEEVOS_BOOT_CART) || !romPath[0]) {
+		return;
+	}
+	free(conf->ndsPath);
+	conf->ndsPath = (char*)malloc(256);
+	memcpy(conf->ndsPath, romPath, 255);
+	conf->ndsPath[255] = 0;
+	free(conf->savPath);
+	conf->savPath = strdup(DSCHEEVOS_DIR "cart.sav");
 }
 
 // A DScheevos session for this ROM will run (hardcore or not).
@@ -168,6 +199,7 @@ int dscheevosFindSession(configuration* conf) {
 	conf->dscheevosModuleCluster = 0;
 	conf->dscheevosSessionCluster = 0;
 	conf->dscheevosPendingCluster = 0;
+	conf->dscheevosRecordCluster = 0;
 
 	u32 head[DSCHEEVOS_SESSION_HEAD / 4];
 	struct stat stModule, stSession;
@@ -180,7 +212,9 @@ int dscheevosFindSession(configuration* conf) {
 		return DSCHEEVOS_SESSION_NONE;
 	}
 #ifdef DSCHEEVOS_RCHASH
-	if (!romMatchesSession(conf, head)) {
+	// Cart mode: the session names the launcher's header stub, not a ROM, and
+	// comes with no hash; the bootloader hashes the cartridge itself.
+	if (!(((const u8*)head)[DSCHEEVOS_S_FLAGS] & DSCHEEVOS_BOOT_CART) && !romMatchesSession(conf, head)) {
 		return DSCHEEVOS_SESSION_WRONG_ROM; // used up, achievements off
 	}
 #endif
@@ -189,6 +223,13 @@ int dscheevosFindSession(configuration* conf) {
 	struct stat stPending;
 	if (stat(DSCHEEVOS_DIR "pending.bin", &stPending) == 0 && stPending.st_size == DSCHEEVOS_JOURNAL_FILE_SIZE) {
 		conf->dscheevosPendingCluster = stPending.st_ino;
+	}
+	// Cheevotron stream sessions: recording.bin (the launcher creates it at its
+	// full size), for the ARM7's copy of the streamer's recording during play
+	struct stat stRecord;
+	if ((((const u8*)head)[DSCHEEVOS_S_FLAGS] & DSCHEEVOS_BOOT_STREAM)
+	 && stat(DSCHEEVOS_DIR "recording.bin", &stRecord) == 0 && stRecord.st_size == (off_t)DSCM_REC_FILE_SIZE) {
+		conf->dscheevosRecordCluster = stRecord.st_ino;
 	}
 	if (((const u8*)head)[DSCHEEVOS_S_HARDCORE]) {
 		// hardcore: no user cheats, and no wideCheatData.bin (any AR codes put

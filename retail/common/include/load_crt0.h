@@ -80,6 +80,7 @@ typedef struct loadCrt0 {
 	u32 dscheevosModuleCluster;
 	u32 dscheevosSessionCluster;
 	u32 dscheevosPendingCluster;
+	u32 dscheevosRecordCluster;
 } loadCrt0;
 
 #endif // LOAD_CRT0_H

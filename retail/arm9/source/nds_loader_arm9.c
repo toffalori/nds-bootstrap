@@ -342,6 +342,7 @@ int runNds(u32 cluster, u32 saveCluster, u32 donorTwlCluster, /* u32 gbaCluster,
 	loader->dscheevosModuleCluster      = conf->dscheevosModuleCluster;
 	loader->dscheevosSessionCluster     = conf->dscheevosSessionCluster;
 	loader->dscheevosPendingCluster     = conf->dscheevosPendingCluster;
+	loader->dscheevosRecordCluster      = conf->dscheevosRecordCluster;
 
 	if (isDSiMode()) {
 		// the last SD write: DSi SD access goes through the ARM7 and needs the

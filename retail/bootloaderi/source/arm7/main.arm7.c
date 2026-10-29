@@ -86,8 +86,7 @@ extern bool dscheevosBootFromCart(void);            // dscheevos_hooks.c
 extern bool dscheevosStream(void);                  // dscheevos_hooks.c
 extern void dscheevosLoadingScreen(void);           // dscheevos_hooks.c
 extern void dscheevosPageFileUpdate(const char* src, aFile* file, u32 offset, u32 size);   // dscheevos_hooks.c
-extern int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID);   // dscheevos_cardboot.c
-extern void dscmCartRead(u32 src, u32* dest, size_t size);
+#include "dscheevos_cardboot.h"                      // dscmCartInit, dscmCartRead, dscmCartHash
 bool dscheevosCartMode = false;                     // boot the inserted Slot-1 cart, not the SD ROM
 
 //#define memcpy __builtin_memcpy
@@ -892,26 +891,16 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp, aFile* romFile) {
 	}
 	dscmCartRead((u32)h->arm7romOffset, (u32*)h->arm7destination, h->arm7binarySize);
 	dscheevosStamp("cart binaries read");
-	// Diagnostics. The SD dump stores the 0x4000-0x8000 secure area ENCRYPTED, so
-	// compare the cartridge against the SD dump in MAIN DATA (file >= 0x8000),
-	// which is plain in both: this tests the DATA_READ path. Separately log the
-	// decrypted secure-area start so a bad secure decrypt is visible by eye.
-	if (h->arm9binarySize > 0x4000) {
-		u8 sd[0x20];
-		u8* cart = (u8*)h->arm9destination;
-		u32 off = (u32)h->arm9romOffset + 0x4000;  // main data
-		fileRead((char*)sd, romFile, off, 0x20);
-		dbg_printf("DScheevos cart data cmp=");
-		dbg_hexa((u32)memcmp(cart + 0x4000, sd, 0x20));
-		dbg_printf(" cartData=");
-		dbg_hexa(*(u32*)(cart + 0x4000));
-		dbg_printf(" sdData=");
-		dbg_hexa(*(u32*)sd);
-		dbg_printf("\n  secureStart=");
-		dbg_hexa(*(u32*)cart);
-		dbg_hexa(*(u32*)(cart + 4));
-		dbg_printf("\n");
-	}
+	// The card's RetroAchievements hash, from the binaries just read, the raw
+	// secure area and the icon block: dscheevosSetup puts it in the session, so
+	// the phone looks the game up by the cartridge, not by any SD file. The
+	// session's own hash is empty in cart mode (the launcher can't do KEY1).
+	(void)romFile;   // nothing of the SD file is used for a cartridge boot
+	dscmCartHash(h, DSCM_CART_HASH);
+	dscheevosStamp("cart hashed");
+	dbg_printf("DScheevos cart: hash ");
+	dbg_printf(DSCM_CART_HASH);
+	dbg_printf("\n");
 	baseChipID     = chipID;
 	baseArm9Off    = *(u32*)(hb + 0x20);
 	baseArm9Size   = *(u32*)(hb + 0x2C);
@@ -1269,9 +1258,13 @@ static void loadOverlaysintoRAM(const tNDSHeader* ndsHeader, const module_params
 		newOverlaysSize += cacheBlockSize;
 	}
 
-	sdmmc_set_ndma_slot(0);
-	fileRead((char*)overlaysLocation, file, alignedOverlaysOffset, newOverlaysSize);
-	sdmmc_set_ndma_slot(4);
+	if (dscheevosCartMode) {   // the overlays the AP-fix patches come off the cartridge, not an SD file
+		dscmCartRead(alignedOverlaysOffset, (u32*)overlaysLocation, newOverlaysSize);
+	} else {
+		sdmmc_set_ndma_slot(0);
+		fileRead((char*)overlaysLocation, file, alignedOverlaysOffset, newOverlaysSize);
+		sdmmc_set_ndma_slot(4);
+	}
 
 	// const char* romTid = getRomTid(ndsHeader);
 	overlaysLocation -= alignedOverlaysOffset;
@@ -1455,9 +1448,13 @@ static void loadNitroFileInfoIntoRAM(const tNDSHeader* ndsHeader, aFile* romFile
 	const u32 size = (baseFatOff-baseFntOff)+baseFatSize;
 	if (size > (colorLutEnabled ? 0x32800 : 0x80000)) return;
 
-	sdmmc_set_ndma_slot(0);
-	fileRead((char*)0x03700000, romFile, baseFntOff, size);
-	sdmmc_set_ndma_slot(4);
+	if (dscheevosCartMode) {   // the file names and FAT of the cartridge, not of an SD file
+		dscmCartRead(baseFntOff, (u32*)0x03700000, size);
+	} else {
+		sdmmc_set_ndma_slot(0);
+		fileRead((char*)0x03700000, romFile, baseFntOff, size);
+		sdmmc_set_ndma_slot(4);
+	}
 
 	dbg_printf("Nitro file info pre-loaded into RAM at ");
 	dbg_hexa(0x03700000);
@@ -2180,7 +2177,9 @@ int arm7_main(void) {
 
 		u32 clonebootFlag = 0;
 		const u32 clonebootOffset = ((romSize-0x88) <= baseRomSize) ? (romSize-0x88) : baseRomSize;
-		fileRead((char*)&clonebootFlag, romFile, clonebootOffset, sizeof(u32));
+		if (!dscheevosCartMode) {   // a retail cartridge has no cloneboot flag, and romSize is the launcher's header stub
+			fileRead((char*)&clonebootFlag, romFile, clonebootOffset, sizeof(u32));
+		}
 		const bool usesCloneboot = (clonebootFlag == 0x16361);
 		if (usesCloneboot) {
 			dbg_printf("Cloneboot detected\n");
@@ -2565,7 +2564,9 @@ int arm7_main(void) {
 
 		u32 clonebootFlag = 0;
 		const u32 clonebootOffset = ((romSize-0x88) <= baseRomSize) ? (romSize-0x88) : baseRomSize;
-		fileRead((char*)&clonebootFlag, romFile, clonebootOffset, sizeof(u32));
+		if (!dscheevosCartMode) {   // a retail cartridge has no cloneboot flag, and romSize is the launcher's header stub
+			fileRead((char*)&clonebootFlag, romFile, clonebootOffset, sizeof(u32));
+		}
 		const bool usesCloneboot = (clonebootFlag == 0x16361);
 		if (usesCloneboot) {
 			dbg_printf("Cloneboot detected\n");

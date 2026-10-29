@@ -306,6 +306,8 @@ int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {
 	dbg_printf("  cart secure read ok, enc=");
 	dbg_hexa(secureAreaData[0]);
 	dbg_hexa(secureAreaData[1]);
+	/* as a dump stores these 2 KB: for the RetroAchievements hash (dscheevos_carthash.c) */
+	memcpy(DSCM_CART_SECURE_RAW, secureAreaData, DSCM_CART_SECURE_RAW_END - DSCM_CART_SECURE_RAW_START);
 	decryptSecureArea(gameCode->key, secureAreaData);
 
 	secureArea = secureAreaData;

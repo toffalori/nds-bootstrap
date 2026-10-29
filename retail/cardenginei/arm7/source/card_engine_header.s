@@ -47,6 +47,11 @@
 .global romMapLines
 .global romMap
 .global dscheevosPendingCluster
+.global dscheevosRecordSector
+.global dscheevosRecordDataSectors
+.global dscheevosRecordSeq
+.global dscheevosRecordTitle
+.global dscheevosRecordCode
 
 #define ICACHE_SIZE	0x2000
 #define DCACHE_SIZE	0x1000
@@ -175,6 +180,16 @@ romMap:
 	.word	0x00000000
 dscheevosPendingCluster:
 	.word	0x00000000
+dscheevosRecordSector:
+	.word	0x00000000
+dscheevosRecordDataSectors:
+	.word	0x00000000
+dscheevosRecordSeq:
+	.word	0x00000000
+dscheevosRecordTitle:
+	.space	12
+dscheevosRecordCode:
+	.space	4
 .align	4
 
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

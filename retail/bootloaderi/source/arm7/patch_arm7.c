@@ -856,11 +856,14 @@ u32 patchCardNdsArm7(
 		// GameCodeMatch: Compare gamecodes between DS Cartridge and Rom on SD
 		// This file can active save located into DS Cartridge for dsi/3ds mode.
 		bool GameCodeMatch = false;
-		// In cart mode the card is in KEY2 data mode (dscmCartInit left it there);
-		// a raw CARD_CMD_HEADER_READ would desync KEY2 and break later card reads.
-		// The cartridge IS the game, so skip the check (GameCodeMatch stays false,
-		// save still relocates to SD, which is what we want).
-		if (!dscheevosBootFromCart() && !gameOnFlashcard && !saveOnFlashcard && REG_SCFG_EXT != 0 && !(REG_SCFG_MC & BIT(0))) {
+		// Cheevotron cart mode: the cartridge is the game, and its own save chip
+		// holds the player's save; no SD save file stands in for it (there is no
+		// SD copy of the game to borrow one from). The card is in KEY2 data mode
+		// (dscmCartInit left it there) and a raw CARD_CMD_HEADER_READ would desync
+		// KEY2, so the game code isn't read back: it matches by definition.
+		if (dscheevosBootFromCart()) {
+			GameCodeMatch = true;
+		} else if (!gameOnFlashcard && !saveOnFlashcard && REG_SCFG_EXT != 0 && !(REG_SCFG_MC & BIT(0))) {
 			char headerData[0x200] = {0};
 			cardParamCommand (CARD_CMD_HEADER_READ, 0,
 				CARD_ACTIVATE | CARD_nRESET | CARD_CLK_SLOW | CARD_BLK_SIZE(1) | CARD_DELAY1(0x1FFF) | CARD_DELAY2(0x3F), 
@@ -877,7 +880,7 @@ u32 patchCardNdsArm7(
 			dbg_hexa(saveRelocation);
 			dbg_printf("\n");
 		}
-		if (saveRelocation || !GameCodeMatch) {
+		if ((saveRelocation && !dscheevosBootFromCart()) || !GameCodeMatch) {
 			if (newArm7binarySize==0x2352C || newArm7binarySize==0x235DC || newArm7binarySize==0x23CAC || newArm7binarySize==0x245C0 || newArm7binarySize==0x245C4) {
 				saveResult = savePatchInvertedThumb(ce7, ndsHeader, moduleParams, saveFileCluster, saveSize);    
 			} else if (isSdk5(moduleParams)) {
