@@ -10,6 +10,9 @@
     for this fork.
 */
 
+/* size over speed: the card engine has 61 KB of WRAM in all, and the polled
+ * read waits on the card, not on the CPU */
+#pragma GCC optimize ("Os")
 #include <nds/card.h>
 #include <nds/memory.h>
 #include <nds/interrupts.h>
