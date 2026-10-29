@@ -1977,10 +1977,21 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 				}
 			}
 			dscheevosMark("screenshots counted");
-			fwrite((u8*)igmText, 1, 0xA000, cebin);
+			// DScheevos: the in-game menu is the same at every start of the same
+			// build; writing it cost 0.6-0.9 s, reading it back much less
+			static u8 igmInPageFile[0x1000];
+			bool igmSame = true;
+			for (u32 i = 0; igmSame && i < 0xA000; i += sizeof(igmInPageFile)) {
+				igmSame = fread(igmInPageFile, 1, sizeof(igmInPageFile), cebin) == sizeof(igmInPageFile)
+				       && memcmp(igmInPageFile, (u8*)igmText + i, sizeof(igmInPageFile)) == 0;
+			}
+			if (!igmSame) {
+				fseek(cebin, 0, SEEK_SET);
+				fwrite((u8*)igmText, 1, 0xA000, cebin);
+			}
 			fclose(cebin);
 			toncset((u8*)igmText, 0, 0xA000);
-			dscheevosMark("in-game menu text in the page file");
+			dscheevosMark(igmSame ? "in-game menu text in the page file already" : "in-game menu text written to the page file");
 		}
 
 		// Load DS blowfish
