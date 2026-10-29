@@ -109,12 +109,17 @@ extern void dscmCartDrain(void);
 #define DSCM_REG_AUXSPICNT (*(vu16*)0x040001A0)
 extern u32 valueBits;
 static bool dscmCartSpiBusy(void) {
+#ifndef TWLSDK
 	const u16 cnt = DSCM_REG_AUXSPICNT;
 	return (valueBits & cartMode) && (cnt & BIT(15)) && ((cnt & BIT(7)) || ((cnt & BIT(13)) && (cnt & BIT(6))));
+#else
+	return false;   // cart mode boots DS games only, never this engine
+#endif
 }
 static void dscmCartSpiWait(void) {
 	for (int i = 0; i < 400000 && dscmCartSpiBusy(); i++);
 }
+#ifndef TWLSDK
 static int dscmResetDefers = 0;
 static bool dscmCartResetDeferred(void) {
 	if (dscmCartSpiBusy() && dscmResetDefers < 60) {
@@ -124,6 +129,10 @@ static bool dscmCartResetDeferred(void) {
 	dscmResetDefers = 0;
 	return false;
 }
+#else
+// cart mode boots DS games only, never this engine (and it has no room left)
+#define dscmCartResetDeferred() false
+#endif
 
 #define	REG_EXTKEYINPUT	(*(vuint16*)0x04000136)
 #define	REG_WIFIIRQ	(*(vuint16*)0x04808012)
@@ -579,6 +588,7 @@ void reset(const bool downloadedSrl) {
 	languageTimer = 0;
 	unlockMutex(&saveMutex);
 
+	#ifndef TWLSDK
 	if (valueBits & cartMode) {
 		// Cheevotron native cart mode: a card read of the game's may still be
 		// running (its ARM9 gave us the slot and stopped its DMAs); finish it, or
@@ -586,7 +596,6 @@ void reset(const bool downloadedSrl) {
 		dscmCartDrain();
 	}
 
-	#ifndef TWLSDK
 	if ((valueBits & isDlp) || currentSrlAddr != *(u32*)(resetParam+0xC) || downloadedSrl) {
 		currentSrlAddr = *(u32*)(resetParam+0xC);
 		if ((valueBits & isDlp) || downloadedSrl) {

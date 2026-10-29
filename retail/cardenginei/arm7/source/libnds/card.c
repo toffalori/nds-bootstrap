@@ -84,7 +84,9 @@ static void __attribute__((noinline)) dscmCartReadPartial(u32 blockBase, u8* dst
 /* Native card access: the game reads the card itself, and a reset can come
  * while one of its transfers is still running. Read its remaining words out:
  * the next command on a busy card would put the card and the controller out
- * of step for KEY2. Needs the ARM7 to own the slot (else BUSY reads 0). */
+ * of step for KEY2. Needs the ARM7 to own the slot (else BUSY reads 0).
+ * Cart mode boots DS games only, so not in the TWL engine (no room there). */
+#ifndef TWLSDK
 void dscmCartDrain(void) {
 	for (u32 guard = 0x100000; (REG_ROMCTRL & CARD_BUSY) && guard; guard--) {
 		if (REG_ROMCTRL & CARD_DATA_READY) {
@@ -93,10 +95,13 @@ void dscmCartDrain(void) {
 		}
 	}
 }
+#endif
 
 void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 	const u32 cmdFlags = (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(1);
+#ifndef TWLSDK
 	dscmCartDrain();
+#endif
 #ifndef TWLSDK
 	// Liveness probe + (only if dead) re-handshake, with IRQs off. The ownership
 	// stub keeps the ARM7 as the card owner, so KEY2 now survives IRQ gaps; the
