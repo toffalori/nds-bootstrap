@@ -91,6 +91,7 @@
 
 // Cheevotron cart read (source/libnds/card.c): read the live cartridge.
 extern void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags);
+extern void dscmCartDrain(void);
 // The card's normal-command port setting is the NDS header's cardControl13
 // (header +0x60); drop the block-size field, dscmCartReadData sets its own.
 #define DSCM_CART_PORTFLAGS (*(u32*)((u8*)ndsHeader + 0x60) & ~0x07000000u)
@@ -99,17 +100,29 @@ extern void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags);
 // to the cartridge's save chip over AUXSPI. This VBlank handler interrupts
 // that code, and the in-game menu, a reset or a quit from here would drop the
 // chip select in the middle of a page write and commit half a page to the
-// player's real save. So neither starts while a transfer is on the bus (SPI
-// mode selected, a byte in flight, or the chip select held between bytes);
-// the menu waits for the next VBlank, a reset waits here for the transfer's
-// end, bounded (a whole page write is well under this).
+// player's real save. So neither starts while a transfer is on the bus (slot
+// enabled, and a byte in flight or the chip select held in SPI mode; a save
+// routine may leave SPI mode set while idle). The menu and a reset wait for
+// the next VBlank (this handler stopped the transfer, so it can't end while
+// we wait here), a reset at most a second, then the bounded wait below (a
+// whole page write is well under it).
 #define DSCM_REG_AUXSPICNT (*(vu16*)0x040001A0)
 extern u32 valueBits;
 static bool dscmCartSpiBusy(void) {
-	return (valueBits & cartMode) && (DSCM_REG_AUXSPICNT & (BIT(13) | BIT(7) | BIT(6)));
+	const u16 cnt = DSCM_REG_AUXSPICNT;
+	return (valueBits & cartMode) && (cnt & BIT(15)) && ((cnt & BIT(7)) || ((cnt & BIT(13)) && (cnt & BIT(6))));
 }
 static void dscmCartSpiWait(void) {
 	for (int i = 0; i < 400000 && dscmCartSpiBusy(); i++);
+}
+static int dscmResetDefers = 0;
+static bool dscmCartResetDeferred(void) {
+	if (dscmCartSpiBusy() && dscmResetDefers < 60) {
+		dscmResetDefers++;
+		return true;
+	}
+	dscmResetDefers = 0;
+	return false;
 }
 
 #define	REG_EXTKEYINPUT	(*(vuint16*)0x04000136)
@@ -565,6 +578,13 @@ void reset(const bool downloadedSrl) {
 	//ipcSyncHooked = false;
 	languageTimer = 0;
 	unlockMutex(&saveMutex);
+
+	if (valueBits & cartMode) {
+		// Cheevotron native cart mode: a card read of the game's may still be
+		// running (its ARM9 gave us the slot and stopped its DMAs); finish it, or
+		// the restarted game's first command meets a busy card.
+		dscmCartDrain();
+	}
 
 	#ifndef TWLSDK
 	if ((valueBits & isDlp) || currentSrlAddr != *(u32*)(resetParam+0xC) || downloadedSrl) {
@@ -2356,7 +2376,9 @@ void myIrqHandlerVBlank(void) {
 		ramDumpTimer = 0;
 	} */
 
-	if (sharedAddr[3] == (vu32)0x52534554) {
+	// Cart mode: not while the game's ARM7 talks to the save chip (see
+	// dscmCartResetDeferred); the ARM9 waits for a later VBlank.
+	if (sharedAddr[3] == (vu32)0x52534554 && !dscmCartResetDeferred()) {
 		#ifndef TWLSDK
 		if (tryLockMutex(&saveMutex)) {
 			dscheevosJournalWrite(true); // DScheevos: the game is resetting, its ARM9 waits
@@ -2370,7 +2392,7 @@ void myIrqHandlerVBlank(void) {
 
 	if ( 0 == (REG_KEYINPUT & (KEY_L | KEY_R | KEY_START | KEY_SELECT))) {
 		if (softResetTimer == 60 * 2) {
-			if (saveTimer == 0) {
+			if (saveTimer == 0 && !dscmCartResetDeferred()) {   // a save transfer: a later VBlank
 				if (lockMutex(&saveMutex)) {
 					REG_MASTER_VOLUME = 0;
 					int oldIME = enterCriticalSection();

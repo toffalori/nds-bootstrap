@@ -1748,6 +1748,12 @@ u32 myIrqEnable(u32 irq) {
 	}
 	#else
 	initialize();
+	if (!(ce9->valueBits & isSdk5)) {
+		// The card read opens the extra DSi RAM (the DScheevos module's home) to
+		// the game's MPU setup, but in Cheevotron's native cart mode no card read
+		// ever comes here. Every game passes here once its MPU is set up.
+		debugRamMpuFix();
+	}
 	#endif
 
 	if (ce9->valueBits & enableExceptionHandler) {

@@ -15,6 +15,7 @@
 
 #include "igm_text.h"
 #include "locations.h"
+#include "dscheevos_hooks.h"
 
 extern u8 gameOnFlashcard;
 extern u16 a9ScfgRom;
@@ -3159,6 +3160,21 @@ u32 patchCardNdsArm9(cardengineArm9* ce9, const tNDSHeader* ndsHeader, const mod
 	u32* cardReadEndOffset;
 	u32* cardPullOutOffset;
 
+	// Cheevotron native cart mode: the game reads its own cartridge, as after a
+	// stock boot, so its card functions (read, ID, pull-out, DMA) stay as they
+	// are and nothing here moves the card bus. The IRQ enable hook stays: it
+	// starts the ARM9 engine (IPC for the in-game menu, reset, DScheevos).
+	extern bool dscheevosCartNative(void);
+	const bool cartNative = dscheevosCartNative();
+	if (cartNative) {
+		// no card read to find it from; below only fixForDifferentBios and
+		// patchGbaSlotInit use it, and they patch only DSi-enhanced titles in
+		// DSi mode (cart mode boots in DS mode)
+		usesThumb = patchOffsetCache.a9IsThumb;
+		ce9->valueBits |= DSCHEEVOS_CE9_CART_NATIVE;
+		dbg_printf("DScheevos cart: native card access, card functions unpatched\n");
+	}
+
 	a9PatchCardIrqEnable(ce9, ndsHeader, moduleParams);
 
 	const char* romTid = getRomTid(ndsHeader);
@@ -3184,10 +3200,11 @@ u32 patchCardNdsArm9(cardengineArm9* ce9, const tNDSHeader* ndsHeader, const mod
 	// on every OS_LockCard; that bus handoff is what tears KEY2 down each read
 	// gap. Flip the ARM9-ownership path's `bic r0,r0,#0x800` to `orr` so asking
 	// for ARM9 keeps bit 11 set. Safe: all ARM9 card access is already patched to
-	// the engine, so the ARM9 never needs the bus.
+	// the engine, so the ARM9 never needs the bus. Not in native mode: there the
+	// ARM9 reads the card itself and takes the bus like on a stock boot.
 	{
 		extern bool dscheevosBootFromCart(void);
-		if (dscheevosBootFromCart()) {
+		if (dscheevosBootFromCart() && !cartNative) {
 			static const u32 miSetProcSig[4] = {0xE1D100B0, 0xE3C00B02, 0xE1C100B0, 0xE12FFF1E};
 			u32* miLoc = findOffset((u32*)ndsHeader->arm9destination, ndsHeader->arm9binarySize, miSetProcSig, 4);
 			if (miLoc) {
@@ -3207,13 +3224,15 @@ u32 patchCardNdsArm9(cardengineArm9* ce9, const tNDSHeader* ndsHeader, const mod
 		patchKeyInputs(ndsHeader, moduleParams);
 	}
 
-	if (isPawsAndClaws(ndsHeader)) {
-		patchCardId(ce9, ndsHeader, moduleParams, false, NULL); // Patch card ID first
-	}
+	if (!cartNative) {
+		if (isPawsAndClaws(ndsHeader)) {
+			patchCardId(ce9, ndsHeader, moduleParams, false, NULL); // Patch card ID first
+		}
 
-	if (!patchCardRead(ce9, ndsHeader, moduleParams, &usesThumb, &readType, &sdk5ReadType, &cardReadEndOffset, startOffset)) {
-		dbg_printf("ERR_LOAD_OTHR\n\n");
-		return ERR_LOAD_OTHR;
+		if (!patchCardRead(ce9, ndsHeader, moduleParams, &usesThumb, &readType, &sdk5ReadType, &cardReadEndOffset, startOffset)) {
+			dbg_printf("ERR_LOAD_OTHR\n\n");
+			return ERR_LOAD_OTHR;
+		}
 	}
 
 	fixForDifferentBios(ce9, ndsHeader, usesThumb, usesCloneboot);
@@ -3221,7 +3240,7 @@ u32 patchCardNdsArm9(cardengineArm9* ce9, const tNDSHeader* ndsHeader, const mod
 	if (ndsHeader->unitCode > 0 && dsiModeConfirmed) {
 		// patchCardRomInit(cardReadEndOffset, usesThumb);
 
-		if (!patchCardHashInit(ndsHeader, moduleParams, usesThumb)) {
+		if (!cartNative && !patchCardHashInit(ndsHeader, moduleParams, usesThumb)) {
 			dbg_printf("ERR_LOAD_OTHR\n\n");
 			return ERR_LOAD_OTHR;
 		}
@@ -3232,6 +3251,9 @@ u32 patchCardNdsArm9(cardengineArm9* ce9, const tNDSHeader* ndsHeader, const mod
 		patchTwlSaveFuncs(ce9);
 	}
 
+	if (cartNative) {
+		// none of the card read, pull-out, card ID or DMA patches below
+	} else {
 	if (strncmp(romTid, "V2G", 3) == 0 && !dsiModeConfirmed) {
 		// try to patch card read a second time
 		dbg_printf("patch card read a second time\n");
@@ -3261,14 +3283,17 @@ u32 patchCardNdsArm9(cardengineArm9* ce9, const tNDSHeader* ndsHeader, const mod
 			return ERR_LOAD_OTHR;
 		}
 	}
+	}
 
 	patchGbaSlotInit(ndsHeader, usesThumb);
 
 	//patchCardRefresh(ndsHeader, moduleParams, usesThumb);
 
-	const bool sleepFound = getSleep(ce9, ndsHeader, moduleParams, usesThumb, ROMinRAM);
+	const bool sleepFound = cartNative ? false : getSleep(ce9, ndsHeader, moduleParams, usesThumb, ROMinRAM);
 
-	if (asyncCardRead && sleepFound) {
+	if (cartNative) {
+		// the game's card DMA runs as on a stock boot
+	} else if (asyncCardRead && sleepFound) {
 		patchCardReadDma(ce9, ndsHeader, moduleParams, usesThumb);
 	} else {
 		const bool cardSetDmaPatched = patchCardSetDma(ce9, ndsHeader, moduleParams, usesThumb, ROMinRAM);
@@ -3307,7 +3332,7 @@ u32 patchCardNdsArm9(cardengineArm9* ce9, const tNDSHeader* ndsHeader, const mod
 
 	//setFlushCache(ce9, patchMpuRegion, usesThumb);
 
-	if (asyncCardRead || asyncCardReadMinimal) {
+	if ((asyncCardRead || asyncCardReadMinimal) && !cartNative) {
 		patchMobiclipFrameLoad(ce9, ndsHeader, moduleParams);
 	}
 

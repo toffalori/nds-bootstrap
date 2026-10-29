@@ -72,9 +72,12 @@
 #define DSCHEEVOS_BOOT_SPECTATOR  0x01  // evaluate and show, send nothing
 #define DSCHEEVOS_BOOT_STREAM     0x04  // Cheevotron: stream RAM to the phone, no on-console placard
 #define DSCHEEVOS_BOOT_CART       0x08  // Cheevotron: boot the inserted Slot-1 cartridge natively, not the SD ROM
+#define DSCHEEVOS_BOOT_CART_NATIVE 0x10 // with CART: the game reads its own cartridge (no card read patches)
 
 // valueBits flag in both ce7 and ce9: hooks are live
 #define DSCHEEVOS_VALUEBIT        BIT(28)
+// valueBits flag in ce9: Cheevotron native cart mode (the game reads its own card)
+#define DSCHEEVOS_CE9_CART_NATIVE BIT(27)
 
 // DScheevosStatus.hardcore: hardcore rules on, but the server sent its
 // "unsupported emulator" warning, so it files unlocks as softcore

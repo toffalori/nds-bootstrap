@@ -100,6 +100,15 @@ bool dscheevosBootFromCart(void) {
 	return (dscheevosFlags() & DSCHEEVOS_BOOT_CART) != 0;
 }
 
+// Cart mode with the game's own card access: none of its card functions are
+// patched, it reads the cartridge itself (by DMA, at card speed) as after a
+// stock boot. Without the flag the card engine serves its reads (polled ARM7
+// reads), the fallback for a cartridge that fails natively.
+bool dscheevosCartNative(void) {
+	return (dscheevosFlags() & (DSCHEEVOS_BOOT_CART | DSCHEEVOS_BOOT_CART_NATIVE))
+		== (DSCHEEVOS_BOOT_CART | DSCHEEVOS_BOOT_CART_NATIVE);
+}
+
 // NitroSDK OS_Halt: mov r0, #0; mcr p15, 0, r0, c7, c0, 4; bx lr
 static int patchOsHalt(const tNDSHeader* ndsHeader, u32 haltEntry) {
 	u32* p = (u32*)ndsHeader->arm9destination;

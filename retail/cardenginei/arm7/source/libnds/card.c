@@ -78,8 +78,22 @@ static void __attribute__((noinline)) dscmCartReadPartial(u32 blockBase, u8* dst
  * short tail goes through dscmCartReadPartial, so dst is never overrun. The card
  * mirrors the secure area (<0x8000) to 0x8000+(addr&0x1FF) itself. dst must be
  * word-aligned, as the game's cache buffers and the reload targets are. */
+/* Native card access: the game reads the card itself, and a reset can come
+ * while one of its transfers is still running. Read its remaining words out:
+ * the next command on a busy card would put the card and the controller out
+ * of step for KEY2. Needs the ARM7 to own the slot (else BUSY reads 0). */
+void dscmCartDrain(void) {
+	for (u32 guard = 0x100000; (REG_ROMCTRL & CARD_BUSY) && guard; guard--) {
+		if (REG_ROMCTRL & CARD_DATA_READY) {
+			u32 data = REG_CARD_DATA_RD;
+			(void)data;
+		}
+	}
+}
+
 void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags) {
 	const u32 cmdFlags = (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(1);
+	dscmCartDrain();
 #ifndef TWLSDK
 	// Liveness probe + (only if dead) re-handshake, with IRQs off. The ownership
 	// stub keeps the ARM7 as the card owner, so KEY2 now survives IRQ gaps; the

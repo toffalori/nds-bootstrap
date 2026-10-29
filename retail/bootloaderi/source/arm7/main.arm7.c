@@ -83,6 +83,7 @@ extern bool dscheevosHardcore(void);
 extern void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* ndsHeader);
 extern void dscheevosStamp(const char* what);
 extern bool dscheevosBootFromCart(void);            // dscheevos_hooks.c
+extern bool dscheevosCartNative(void);              // dscheevos_hooks.c
 extern bool dscheevosStream(void);                  // dscheevos_hooks.c
 extern void dscheevosLoadingScreen(void);           // dscheevos_hooks.c
 extern void dscheevosPageFileUpdate(const char* src, aFile* file, u32 offset, u32 size);   // dscheevos_hooks.c
@@ -195,6 +196,7 @@ u16 baseSecureCRC = 0;
 u32 baseRomSize = 0;
 u16 baseHeaderCRC = 0;
 u32 baseChipID = 0;
+static u32 cartChipID = 0;   // Cheevotron cart mode: the inserted card's real chip ID
 u32 romPaddingSize = 0;
 bool pkmnHeader = false;
 bool pkmnGen5 = false;
@@ -914,6 +916,7 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp, aFile* romFile) {
 	dbg_printf(DSCM_CART_HASH);
 	dbg_printf("\n");
 	baseChipID     = chipID;
+	cartChipID     = chipID;
 	baseArm9Off    = *(u32*)(hb + 0x20);
 	baseArm9Size   = *(u32*)(hb + 0x2C);
 	baseArm7Off    = *(u32*)(hb + 0x30);
@@ -2081,8 +2084,14 @@ int arm7_main(void) {
 	my_readUserSettings(ndsHeader); // Header has to be loaded first
 
 	baseChipID = getChipId(pkmnHeader ? (tNDSHeader*)NDS_HEADER_POKEMON : ndsHeader, moduleParams);
+	if (dscheevosCartNative() && cartChipID != 0) {
+		// The game reads the card's ID itself and compares it with the boot's
+		// (0x027FF800/0x027FFC00); a made-up ID would look like a pulled card.
+		baseChipID = cartChipID;
+	}
 
-	cheatSizeTotal = wideCheatSize+cheatSize+(apPatchIsCheat ? apPatchSize : 0);
+	// native cart mode: no AP-fix in cheat form either (see useApPatch)
+	cheatSizeTotal = wideCheatSize+cheatSize+((apPatchIsCheat && !dscheevosCartNative()) ? apPatchSize : 0);
 	tonccpy(cheatEngineBuffer, (char*)CHEAT_ENGINE_BUFFERED_LOCATION, 0x400);
 	toncset((char*)CHEAT_ENGINE_BUFFERED_LOCATION, 0, 0x400);
 
@@ -2490,7 +2499,10 @@ int arm7_main(void) {
 			tonccpy((char*)SAV_FILE_LOCATION_MAINMEM, savFile, sizeof(aFile));
 		}
 
-		const bool useApPatch = (srlAddr == 0 && !srlFromPageFile && apPatchFileCluster != 0 && !apPatchIsCheat && apPatchSize > 0 && apPatchSize <= 0x1000);
+		// Cheevotron native cart mode: no AP-fix. The game's anti-piracy checks
+		// read the real cartridge through its own card code and pass as on a
+		// stock boot, and its overlays come straight off the card, unpatched.
+		const bool useApPatch = !dscheevosCartNative() && (srlAddr == 0 && !srlFromPageFile && apPatchFileCluster != 0 && !apPatchIsCheat && apPatchSize > 0 && apPatchSize <= 0x1000);
 
 		if (useApPatch) {
 			aFile apPatchFile;

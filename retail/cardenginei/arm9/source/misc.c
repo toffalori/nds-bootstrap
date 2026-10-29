@@ -345,7 +345,9 @@ void reset(u32 param, u32 tid2) {
 		while (REG_VCOUNT == 191);
 	}
 
-	sysSetCardOwner(true);	// Give Slot-1 access back to arm9
+	// Cheevotron native cart mode: the ARM7 keeps Slot-1, as at the first boot:
+	// the game's ARM7 polls the card's ID before its ARM9 first asks for the bus.
+	sysSetCardOwner(!(ce9->valueBits & DSCHEEVOS_CE9_CART_NATIVE));	// Give Slot-1 access back to arm9
 
 	#ifndef GSDD
 	if ((ce9->valueBits & isDlp) || *(u32*)(resetParams+0xC) > 0) {
