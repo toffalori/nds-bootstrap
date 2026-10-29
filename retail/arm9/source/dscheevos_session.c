@@ -72,8 +72,15 @@ static int readSession(const configuration* conf, u32* head, struct stat* stModu
 // a cartridge keeps its save on its own chip, so no SD save file is used,
 // and the ini's SAV_PATH (the SD game's save) stays untouched. Called right
 // after the ini is read, before anything opens the ROM.
+// Only for a session readSession() will take (size and age): a stale cart
+// session left behind by a boot that died before dscheevosFindSession renamed
+// it must not make the next boot run the header stub as a plain ROM.
 void dscheevosCartPaths(configuration* conf) {
 	u32 head[DSCHEEVOS_SESSION_HEAD / 4];
+	struct stat stSession;
+	if (stat(DSCHEEVOS_DIR "session.bin", &stSession) < 0 || stSession.st_size > DSCHEEVOS_SESSION_MAX) {
+		return;
+	}
 	FILE* f = fopen(DSCHEEVOS_DIR "session.bin", "rb");
 	if (!f) {
 		return;
@@ -81,7 +88,10 @@ void dscheevosCartPaths(configuration* conf) {
 	const size_t got = fread(head, 1, DSCHEEVOS_SESSION_HEAD, f);
 	fclose(f);
 	const char* romPath = (const char*)head + DSCHEEVOS_S_ROM_PATH;
+	const s32 age = (s32)((u32)time(NULL) - head[DSCHEEVOS_S_UNIX_TIME / 4]);
 	if (got != DSCHEEVOS_SESSION_HEAD || head[0] != DSCHEEVOS_SESSION_MAGIC
+	 || head[DSCHEEVOS_S_FILE_SIZE / 4] != (u32)stSession.st_size
+	 || age < -DSCHEEVOS_SESSION_MAX_AHEAD || age > DSCHEEVOS_SESSION_MAX_AGE
 	 || !(((const u8*)head)[DSCHEEVOS_S_FLAGS] & DSCHEEVOS_BOOT_CART) || !romPath[0]) {
 		return;
 	}

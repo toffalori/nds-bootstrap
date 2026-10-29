@@ -95,6 +95,23 @@ extern void dscmCartReadData(u32 src, u8* dst, u32 len, u32 portFlags);
 // (header +0x60); drop the block-size field, dscmCartReadData sets its own.
 #define DSCM_CART_PORTFLAGS (*(u32*)((u8*)ndsHeader + 0x60) & ~0x07000000u)
 
+// Cheevotron cart mode runs with no save patch: the game's own ARM7 code talks
+// to the cartridge's save chip over AUXSPI. This VBlank handler interrupts
+// that code, and the in-game menu, a reset or a quit from here would drop the
+// chip select in the middle of a page write and commit half a page to the
+// player's real save. So neither starts while a transfer is on the bus (SPI
+// mode selected, a byte in flight, or the chip select held between bytes);
+// the menu waits for the next VBlank, a reset waits here for the transfer's
+// end, bounded (a whole page write is well under this).
+#define DSCM_REG_AUXSPICNT (*(vu16*)0x040001A0)
+extern u32 valueBits;
+static bool dscmCartSpiBusy(void) {
+	return (valueBits & cartMode) && (DSCM_REG_AUXSPICNT & (BIT(13) | BIT(7) | BIT(6)));
+}
+static void dscmCartSpiWait(void) {
+	for (int i = 0; i < 400000 && dscmCartSpiBusy(); i++);
+}
+
 #define	REG_EXTKEYINPUT	(*(vuint16*)0x04000136)
 #define	REG_WIFIIRQ	(*(vuint16*)0x04808012)
 
@@ -2094,7 +2111,7 @@ static void dscheevosVBlank(void) {
 	dscheevosNetPoll(powcnt2, powerUs, gameWifi);
 	// Cheevotron: the streamer's recording onto the SD card, a sector a VBlank at
 	// most (dscheevos_record.c); never next to a ROM read or a save
-	dscheevosRecordVBlank(&saveMutex, readOngoing);
+	dscheevosRecordVBlank(&saveMutex, readOngoing, driveInited);
 
 	if ((valueBits & i2cBricked) || consoleModel >= 2 || romRead_LED == 1 || dmaRomRead_LED == 1) {
 		return;
@@ -2126,7 +2143,7 @@ void dscheevosJournalWrite(bool finishRead) {
 		}
 		while (!resume_cardRead_arm9());
 	}
-	dscheevosRecordFlush();
+	dscheevosRecordFlush(driveInited);
 	if (!dscheevosPendingCluster) {
 		return;
 	}
@@ -2254,7 +2271,8 @@ void myIrqHandlerVBlank(void) {
 	}
 #endif */
 
-	if ((0 == (REG_KEYINPUT & igmHotkey) && 0 == (REG_EXTKEYINPUT & (((igmHotkey >> 10) & 3) | ((igmHotkey >> 6) & 0xC0))) && (valueBits & igmAccessible) && !wifiIrq) /* || returnToMenu */ || sharedAddr[5] == 0x4C4D4749 /* IGML */) {
+	if (((0 == (REG_KEYINPUT & igmHotkey) && 0 == (REG_EXTKEYINPUT & (((igmHotkey >> 10) & 3) | ((igmHotkey >> 6) & 0xC0))) && (valueBits & igmAccessible) && !wifiIrq) /* || returnToMenu */ || sharedAddr[5] == 0x4C4D4749 /* IGML */)
+	 && !dscmCartSpiBusy()) {
 		if (tryLockMutex(&saveMutex)) {
 #ifdef TWLSDK
 		igmText = (struct IgmText *)INGAME_MENU_LOCATION;
@@ -2313,6 +2331,7 @@ void myIrqHandlerVBlank(void) {
 				unlockMutex(&saveMutex);
 			}
 			dscheevosLedRelease();
+			dscmCartSpiWait();
 			returnToLoader(false);
 #endif
 		}
@@ -2345,6 +2364,7 @@ void myIrqHandlerVBlank(void) {
 		}
 		dscheevosLedRelease();
 		#endif
+		dscmCartSpiWait();
 		reset(false);
 	}
 
@@ -2358,6 +2378,7 @@ void myIrqHandlerVBlank(void) {
 					dscheevosJournalWrite(true); // DScheevos: before the soft reset
 					dscheevosLedRelease();
 					#endif
+					dscmCartSpiWait();
 					forceGameReboot();
 					leaveCriticalSection(oldIME);
 				}

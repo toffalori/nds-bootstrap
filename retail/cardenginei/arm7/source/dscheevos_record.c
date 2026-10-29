@@ -68,6 +68,15 @@ static u32 flightVBlanks;
 static u32 sinceHeader;           // VBlanks since the last header write
 static u32 sectorsSinceHeader;
 static u32 backoff;
+static u32 cardValidFrom;         // valid_from of the last header confirmed on the card
+
+// The card engine's SD handle is real: driveInitialize ran and SD_Init got
+// to its end (it sets bit 9 of clk last), and the slot is on the card. A
+// zeroed handle would address an SDHC card by bytes, i.e. the wrong sector.
+static bool sdReady(bool driveInited) {
+	return driveInited && (handleSD.clk & 0x200) && handleSD.total_size
+	    && dscheevosRecordSector + DSCM_REC_SLOT_SECTORS <= handleSD.total_size;
+}
 
 // The module's recording header, at its physical address (the module's data
 // may be linked through the 0x0C000000 mirror); NULL until it is published
@@ -92,6 +101,17 @@ static dscm_rec_t* recHeader(void) {
 	return r;
 }
 
+// Ends a command the controller still holds open (CMD12, the forced stop),
+// bounded, and clears its flags: my_sdmmc's commands wait for CMD_BUSY with
+// no bound, so one left open would hang the next save or menu.
+static void sdAbort(void) {
+	u32 spins = START_SPINS;
+	sdmmc_write16(REG_SDSTOP, 1);
+	while ((sdmmc_read16(REG_SDSTATUS1) & TMIO_STAT1_CMD_BUSY) && --spins);
+	sdmmc_write16(REG_SDSTATUS0, 0);
+	sdmmc_write16(REG_SDSTATUS1, 0);
+}
+
 // Sends one sector to the card and returns once the controller has taken the
 // data, as my_sdmmc_sdcard_writesectors does up to there: it doesn't wait for
 // the card to finish. 0, or the step that failed.
@@ -103,6 +123,7 @@ static int sdWriteStart(u32 sector, const u32* data) {
 	while (sdmmc_read16(REG_SDSTATUS1) & TMIO_STAT1_CMD_BUSY) {
 		if (!--spins) return 1;
 	}
+	spins = START_SPINS;              // the FIFO wait below gets a budget of its own
 	sdmmc_mask16(REG_SDPORTSEL, 0x3, (u16)handleSD.devicenumber);   // the SD card, its clock and bus width
 	setckl(handleSD.clk);
 	if (handleSD.SDOPT == 0) {
@@ -124,9 +145,9 @@ static int sdWriteStart(u32 sector, const u32* data) {
 	sdmmc_write16(REG_SDCMD, WRITE_CMD & 0xFFFF);
 	for (;;) {
 		const u16 status1 = sdmmc_read16(REG_SDSTATUS1);
-		if (status1 & TMIO_MASK_GW) return 2;
+		if (status1 & TMIO_MASK_GW) { sdAbort(); return 2; }
 		if (!(sdmmc_read16(REG_SDDATACTL32) & 0x200)) break;   // the FIFO takes a block
-		if (!--spins) return 3;
+		if (!--spins) { sdAbort(); return 3; }                   // never left open with no data
 	}
 	sdmmc_mask16(REG_SDSTATUS1, TMIO_STAT1_TXRQ, 0);
 	for (u32 i = 0; i < SECTOR / 4; i++) {
@@ -181,6 +202,7 @@ static void startRun(dscm_rec_t* rec) {
 	rec->sd_valid_from = 0;
 	rec->sd_skipped = 0;
 	rec->sd_state = DSCM_REC_SD_ON;
+	cardValidFrom = 0;
 	toncset(rec->sd_header, 0, sizeof(rec->sd_header));
 	headerDirty = 1;              // the claim's header has no run yet
 	sinceHeader = HEADER_VBLANKS; // so it goes out at once
@@ -203,6 +225,16 @@ static void fillHeader(dscm_rec_t* rec, u8 flags) {
 	tonccpy(h->game_hash, rec->game_hash, sizeof(h->game_hash));
 	h->data_sectors = dscheevosRecordDataSectors;
 	h->written = rec->sd_written;
+	// the sectors the next HEADER_SECTORS data writes may overwrite (a lap of
+	// the slot) are given up now: a power-off before the next header must not
+	// leave newer data labelled with their old offsets
+	{
+		const u32 ahead = rec->sd_written + (HEADER_SECTORS + 1) * SECTOR;
+		const u32 capacity = dscheevosRecordDataSectors * SECTOR;
+		if (ahead > capacity && rec->sd_valid_from < ahead - capacity) {
+			rec->sd_valid_from = ahead - capacity;
+		}
+	}
 	h->valid_from = rec->sd_valid_from;
 	h->segment = rec->segment;
 	h->end_frame = rec->end_frame;
@@ -229,7 +261,13 @@ static u32 nextSector(dscm_rec_t* rec) {
 		rec->sd_written = oldest * SECTOR;
 		rec->sd_valid_from = oldest * SECTOR;
 		headerDirty = 1;
+		sinceHeader = HEADER_VBLANKS;   // the header before any more data
 		k = oldest;
+	}
+	// a lap of the slot: the victim must be outside the card's header window first
+	if (k >= dscheevosRecordDataSectors && (k - dscheevosRecordDataSectors) * SECTOR >= cardValidFrom) {
+		headerDirty = 1;
+		sinceHeader = HEADER_VBLANKS;
 	}
 	return k;
 }
@@ -248,6 +286,7 @@ static void failed(dscm_rec_t* rec, int step) {
 			rec->sd_written = (flightSector + 1) * SECTOR;
 			rec->sd_valid_from = rec->sd_written;
 			headerDirty = 1;
+			sinceHeader = HEADER_VBLANKS;
 		}
 	}
 }
@@ -296,6 +335,7 @@ static void finishWrite(dscm_rec_t* rec, int end) {
 			// the ring overtook the sector while the card took it: its copy may mix two laps
 			rec->sd_skipped++;
 			rec->sd_valid_from = rec->sd_written;
+			sinceHeader = HEADER_VBLANKS;
 		}
 		headerDirty = 1;
 		sectorsSinceHeader++;
@@ -303,13 +343,14 @@ static void finishWrite(dscm_rec_t* rec, int end) {
 		headerDirty = 0;
 		sinceHeader = 0;
 		sectorsSinceHeader = 0;
+		cardValidFrom = ((const dscm_recslot_t*)rec->sd_header)->valid_from;
 	}
 	flight = FLIGHT_NONE;
 	rec->sd_state = DSCM_REC_SD_ON;
 }
 
-void dscheevosRecordVBlank(int* saveMutex, bool sdBusy) {
-	if (!dscheevosRecordSector) {
+void dscheevosRecordVBlank(int* saveMutex, bool sdBusy, bool driveInited) {
+	if (!dscheevosRecordSector || !sdReady(driveInited)) {
 		return;
 	}
 	dscm_rec_t* rec = recHeader();
@@ -377,8 +418,8 @@ static bool waitWrite(dscm_rec_t* rec) {
 	return true;
 }
 
-void dscheevosRecordFlush(void) {
-	if (!dscheevosRecordSector) {
+void dscheevosRecordFlush(bool driveInited) {
+	if (!dscheevosRecordSector || !sdReady(driveInited)) {
 		return;
 	}
 	dscm_rec_t* rec = recHeader();
