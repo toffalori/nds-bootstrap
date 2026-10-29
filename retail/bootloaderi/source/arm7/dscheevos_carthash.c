@@ -4,12 +4,13 @@
  * RetroAchievements identifies a DS game by rcheevos' hash of its ROM dump:
  * MD5 over the header's first 0x160 bytes, the ARM9 binary, the ARM7 binary
  * and the 0xA00-byte icon/title block, each as laid out in the dump
- * (rcheevos src/hash/rc_hash_rom.c, rc_hash_nintendo_ds). A dump stores the
- * secure area as the cartridge returns it in KEY1 mode: the first 2 KB
- * (0x4000..0x47FF) still encrypted, "encryObj" included. The card boot
- * decrypts those 2 KB in place and blanks the ID before the game runs, so it
- * keeps a raw copy for this hash; everything else is the same bytes a dumper
- * reads.
+ * (rcheevos src/hash/rc_hash_rom.c, rc_hash_nintendo_ds). The dumps
+ * RetroAchievements lists (No-Intro) hold the secure area decrypted: the
+ * first 2 KB (0x4000..0x47FF) decrypted and the "encryObj" ID replaced by
+ * 0xE7FFDEFF twice, exactly as the card boot leaves it in RAM. Checked on
+ * Super Mario 64 DS (Europe) and HeartGold (Germany): a hash over the still
+ * encrypted 2 KB, as the card returns them in KEY1 mode, matches neither.
+ * So the binaries are hashed as they are in RAM right after the card read.
  *
  * MD5: RFC 1321, written out plainly; the bootloader has no libc hash and no
  * room for a general one.
@@ -139,45 +140,20 @@ static void md5_finish(md5_t* m, char out[33]) {
 	out[32] = 0;
 }
 
-/* The bytes of ROM [start, end) as a dump holds them: the raw secure copy
- * for 0x4000..0x47FF, the RAM copy of the binary for the rest. */
-static void hash_binary(md5_t* m, const u8* ram, u32 romOffset, u32 size, const u8* secureRaw) {
-	const u32 end = romOffset + size;
-	u32 pos = romOffset;
-	while (pos < end) {
-		u32 stop = end;
-		if (pos < DSCM_CART_SECURE_RAW_START && stop > DSCM_CART_SECURE_RAW_START) {
-			stop = DSCM_CART_SECURE_RAW_START;
-		} else if (pos >= DSCM_CART_SECURE_RAW_START && pos < DSCM_CART_SECURE_RAW_END) {
-			if (stop > DSCM_CART_SECURE_RAW_END) {
-				stop = DSCM_CART_SECURE_RAW_END;
-			}
-		}
-		if (pos >= DSCM_CART_SECURE_RAW_START && pos < DSCM_CART_SECURE_RAW_END) {
-			md5_append(m, secureRaw + (pos - DSCM_CART_SECURE_RAW_START), stop - pos);
-		} else {
-			md5_append(m, ram + (pos - romOffset), stop - pos);
-		}
-		pos = stop;
-	}
-}
-
-void dscmCartHashRom(const u8* header, const u8* arm9, const u8* arm7, const u8* secureRaw, const u8* icon, md5_t* m, char out[33]) {
-	const u32 arm9Offset = *(const u32*)(header + 0x20);
-	const u32 arm9Size   = *(const u32*)(header + 0x2C);
-	const u32 arm7Offset = *(const u32*)(header + 0x30);
-	const u32 arm7Size   = *(const u32*)(header + 0x3C);
+void dscmCartHashRom(const u8* header, const u8* arm9, const u8* arm7, const u8* icon, md5_t* m, char out[33]) {
+	const u32 arm9Size = *(const u32*)(header + 0x2C);
+	const u32 arm7Size = *(const u32*)(header + 0x3C);
 	md5_init(m);
 	md5_append(m, header, 0x160);
-	hash_binary(m, arm9, arm9Offset, arm9Size, secureRaw);
-	hash_binary(m, arm7, arm7Offset, arm7Size, secureRaw);
+	md5_append(m, arm9, arm9Size);
+	md5_append(m, arm7, arm7Size);
 	md5_append(m, icon, DSCM_CART_ICON_SIZE);
 	md5_finish(m, out);
 }
 
 #ifndef DSCM_CART_HASH_HOST
 /* The cartridge now in the slot, after loadBinary_ARM7_cart read its
- * binaries into RAM and dscmCartInit kept the raw secure area. The icon
+ * binaries into RAM (nothing has patched them yet). The icon
  * block is read from the card here; a ROM without one (icon offset 0) hashes
  * zeros for it, as rcheevos does when the read falls short. */
 void dscmCartHash(const tNDSHeader* ndsHeader, char out[33]) {
@@ -189,6 +165,6 @@ void dscmCartHash(const tNDSHeader* ndsHeader, char out[33]) {
 		dscmCartRead(iconOffset, (u32*)icon, DSCM_CART_ICON_SIZE);
 	}
 	dscmCartHashRom(hb, (const u8*)ndsHeader->arm9destination, (const u8*)ndsHeader->arm7destination,
-	                DSCM_CART_SECURE_RAW, icon, (md5_t*)DSCM_CART_MD5, out);
+	                icon, (md5_t*)DSCM_CART_MD5, out);
 }
 #endif
