@@ -72,6 +72,16 @@ void dscheevosFlush(void) {
 	(*(void (*)(void))f)();
 }
 
+// The module's "Reconnect" (Cheevotron streamer builds): a fresh Wi-Fi
+// association and pairing at its next idle pass. 0 if the module has none.
+static u32 dscheevosReconnectEntry(void) {
+	if (*(u32*)DSCHEEVOS_LOCATION != DSCHEEVOS_MAGIC) {
+		return 0;
+	}
+	const u32 f = *(u32*)(DSCHEEVOS_LOCATION + DSCHEEVOS_H_RECONNECT);
+	return (f > DSCHEEVOS_LOCATION && f < DSCHEEVOS_LOCATION + DSCHEEVOS_IMAGE_MAX) ? f : 0;
+}
+
 bool dscheevosHardcore(void) {
 	const DScheevosStatus* s = dscheevosStatus();
 	return s && s->hardcore;
@@ -195,7 +205,7 @@ static void stateText(const DScheevosListEntry* e, const char** text, FontPalett
 	}
 }
 
-static void drawSummary(const DScheevosStatus* s) {
+static void drawSummary(const DScheevosStatus* s, u32 reconnect, bool reconnectAsked) {
 	unsigned char line[33];
 	int x, y;
 
@@ -288,7 +298,13 @@ static void drawSummary(const DScheevosStatus* s) {
 			printNum(16, y, s->idleNone, FONT_DARKER_GRAY);
 		}
 	}
-	print(1, 22, (const unsigned char*)"RIGHT: List  B: Back", FONT_LIGHT_GRAY, false);
+	if (reconnectAsked) {
+		print(0, 22, (const unsigned char*)"Reconnects in game  B: Back", FONT_LIME, false);
+	} else if (reconnect) {
+		print(0, 22, (const unsigned char*)"A: Reconnect RIGHT: List B: Back", FONT_LIGHT_GRAY, false);
+	} else {
+		print(1, 22, (const unsigned char*)"RIGHT: List  B: Back", FONT_LIGHT_GRAY, false);
+	}
 }
 
 // One page of the list, two lines per achievement; `sel` has the cursor
@@ -373,6 +389,8 @@ static void drawDetail(const DScheevosListEntry* e) {
 
 void dscheevosMenu(void) {
 	const DScheevosStatus* s = dscheevosStatus();
+	const u32 reconnect = dscheevosReconnectEntry();
+	bool reconnectAsked = false;
 	bool list = false;   // false: the summary page
 	bool detail = false;
 	u32 sel = 0;
@@ -397,7 +415,7 @@ void dscheevosMenu(void) {
 			drawList(s, l, sel);
 		} else {
 			printCenter(16, 0, (const unsigned char*)"RetroAchievements", FONT_WHITE, false);
-			drawSummary(s);
+			drawSummary(s, reconnect, reconnectAsked);
 		}
 
 		const u32 key = getKey();
@@ -412,7 +430,11 @@ void dscheevosMenu(void) {
 			continue;
 		}
 		if (!list) {
-			if (key & (KEY_RIGHT | KEY_DOWN)) {
+			if ((key & KEY_A) && reconnect && !reconnectAsked) {
+				// the module only takes note: the work runs once the game does
+				(*(void (*)(void))reconnect)();
+				reconnectAsked = true;
+			} else if (key & (KEY_RIGHT | KEY_DOWN)) {
 				list = true;
 			}
 			continue;

@@ -39,6 +39,7 @@
 #define DSCHEEVOS_H_NETRING       0x44  // the module's frame ring for the ARM7 SDIO shim (dscm_shim.h), 0 = none
 #define DSCHEEVOS_H_CUES          0x48  // LED cues, kept in RAM by the ARM9 (DSCHEEVOS_CUE_*)
 #define DSCHEEVOS_H_REC           0x4C  // dscm_rec_t* (dscm_record.h): the streamer's recording, mirrored to the SD card by the ARM7; 0 = none
+#define DSCHEEVOS_H_RECONNECT     0x50  // ARM code (streamer): reconnect at the next idle pass, call with the game stopped; 0 = none
 
 // header word 0x48: counters wrap, act on a change
 #define DSCHEEVOS_CUE_PROGRESS_MASK     0x000000FF  // measured progress updates
