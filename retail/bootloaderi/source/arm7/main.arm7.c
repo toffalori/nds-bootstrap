@@ -2848,6 +2848,31 @@ int arm7_main(void) {
 		dbg_hexa(arm9_screenTrace);   // bit 0 white at the start, bit 1 brand screen shown, bit 2 stage 1's screen kept, bits 8-15 switches
 		dbg_printf("\n");
 	}
+#ifndef LOADERTYPE2
+	if (dscheevosCartNative()) {
+		// Diagnostic: the game didn't start in native mode. Is the KEY2 session
+		// the ARM7's handshake left live for the ARM9, which the game reads from?
+		// Data-mode chip ID reads by the ARM7, the ARM9, the ARM7 again: each is
+		// the card's ID only while the session is live for that CPU.
+		const u32 a7 = dscmCartProbeChipId();
+		arm9_cardProbeFlags = dscmCartProbeFlags();
+		arm9_cardProbe = 0x11111111;
+		arm9_stateFlag = ARM9_DSCM_CARDPROBE;
+		while (arm9_stateFlag != ARM9_READY);
+		const u32 a7again = dscmCartProbeChipId();
+		dbg_printf("DScheevos cart probe: chip ");
+		dbg_hexa(cartChipID);
+		dbg_printf(" arm7 ");
+		dbg_hexa(a7);
+		dbg_printf(" arm9 ");
+		dbg_hexa(arm9_cardProbe);
+		dbg_printf(" arm7 again ");
+		dbg_hexa(a7again);
+		dbg_printf(" flags ");
+		dbg_hexa(arm9_cardProbeFlags);
+		dbg_printf("\n");
+	}
+#endif
 	arm9_stateFlag = ARM9_SETSCFG;
 	while (arm9_stateFlag != ARM9_READY) {};
 	dscheevosStamp("SCFG set");

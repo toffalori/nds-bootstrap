@@ -24,6 +24,12 @@ int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID);
  * The secure area (0x4000..0x7FFF) comes from the decrypted copy cardInit kept. */
 void dscmCartRead(u32 src, u32* dest, size_t size);
 
+/* Diagnostic: a data-mode chip ID read (0xB8), which returns the card's ID only
+ * while the KEY2 session is live for the reading CPU; and the ROMCTRL value
+ * for it (the ARM9's probe uses the same). */
+u32 dscmCartProbeFlags(void);
+u32 dscmCartProbeChipId(void);
+
 /* The cartridge's RetroAchievements hash (dscheevos_carthash.c), computed as
  * rcheevos hashes a dump of it. Buffers in the DScheevos carve-out, like
  * cardInit's: the icon block read for the hash and the MD5 state. The hash

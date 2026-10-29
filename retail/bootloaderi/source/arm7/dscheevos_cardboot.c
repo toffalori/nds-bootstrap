@@ -324,6 +324,16 @@ int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {
 	return DSCM_CART_OK;
 }
 
+u32 dscmCartProbeFlags(void) {
+	return (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(7);
+}
+
+u32 dscmCartProbeChipId(void) {
+	u32 id = 0xFFFFFFFF;
+	cardParamCommand(0xB8, 0, dscmCartProbeFlags(), &id, 1);
+	return id;
+}
+
 void dscmCartRead(u32 src, u32* dest, size_t size) {
 	size_t readSize;
 	if (src < CARD_SECURE_AREA_OFFSET) {

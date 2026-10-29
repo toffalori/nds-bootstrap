@@ -64,6 +64,7 @@
 #define ARM9_WRAMONARM9 12
 #define ARM9_DSCHEEVOS_INIT 13
 #define ARM9_DSCHEEVOS_PLACARD 14
+#define ARM9_DSCM_CARDPROBE 15
 //};
 
 extern u32* arm9executeAddress;
@@ -74,6 +75,8 @@ extern volatile bool arm9_brandScreen;
 extern volatile bool arm9_loadingScreenReady;
 extern volatile u32 arm9_screenTrace;
 extern volatile u32 arm9_stage1Ticks;
+extern volatile u32 arm9_cardProbe;        // Cheevotron cart: the chip ID the ARM9 read (ARM9_DSCM_CARDPROBE)
+extern volatile u32 arm9_cardProbeFlags;   // and the ROMCTRL value it read it with
 extern u32 arm9_SCFG_EXT;
 extern u16 arm9_SCFG_CLK;
 extern volatile bool esrbScreenPrepared;

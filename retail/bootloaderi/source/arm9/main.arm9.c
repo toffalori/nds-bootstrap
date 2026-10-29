@@ -74,6 +74,31 @@ volatile u32 arm9_screenTrace = 0;
 // The first stage's clock (its ARM9 timers 2+3, 32728 Hz) when this code
 // started, for the ARM7's log: when the hand-over ended, in stage1.log's time.
 volatile u32 arm9_stage1Ticks = 0;
+volatile u32 arm9_cardProbe = 0;
+volatile u32 arm9_cardProbeFlags = 0;
+
+#ifndef LOADERTYPE2
+// Cheevotron cart diagnostic: a data-mode chip ID read (0xB8) with the ARM9 on
+// the Slot-1 bus. It returns the card's ID only if the KEY2 session the ARM7's
+// handshake left is live for the ARM9 too (the game reads from the ARM9).
+// Registers and immediates only: this runs from arm9ram.
+static inline u32 arm9_dscmCardChipId(u32 flags) {
+	u32 id = 0xFFFFFFFF;
+	u32 guard = 0x100000;
+	*(vu8*)0x040001A1 = 0x80;              // AUXSPICNT: slot enabled, ROM mode
+	*(vu8*)0x040001A8 = 0xB8;              // the command, parameters 0
+	for (int i = 1; i < 8; i++) {
+		*(vu8*)(0x040001A8 + i) = 0;
+	}
+	*(vu32*)0x040001A4 = flags;            // ROMCTRL: go
+	do {
+		if (*(vu32*)0x040001A4 & BIT(23)) {  // a word ready
+			id = *(vu32*)0x04100010;
+		}
+	} while ((*(vu32*)0x040001A4 & BIT(31)) && --guard);
+	return id;
+}
+#endif
 #endif
 u32 arm9_SCFG_EXT = 0;
 u16 arm9_SCFG_CLK = 0;
@@ -581,6 +606,14 @@ void arm9_main(void) {
 				placardFrames -= 26;
 			}
 		}
+#ifndef LOADERTYPE2
+		if (arm9_stateFlag == ARM9_DSCM_CARDPROBE) {
+			REG_EXMEMCNT &= ~BIT(11);              // Slot-1 to the ARM9, as the game takes it
+			arm9_cardProbe = arm9_dscmCardChipId(arm9_cardProbeFlags);
+			REG_EXMEMCNT |= BIT(11);               // and back to the ARM7
+			arm9_stateFlag = ARM9_READY;
+		}
+#endif
 		if (arm9_stateFlag == ARM9_INITMBK) {
 			initMBKARM9_dsiMode();
 			arm9_stateFlag = ARM9_READY;
