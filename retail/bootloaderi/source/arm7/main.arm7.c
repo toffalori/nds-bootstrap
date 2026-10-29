@@ -886,6 +886,18 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp, aFile* romFile) {
 	dbg_printf(" arm9size=");
 	dbg_hexa(h->arm9binarySize);
 	dbg_printf("\n");
+	// The Pokemon fixes loadBinary_ARM7 makes from an SD ROM's header: Gen 4
+	// needs a header copy (game code ADAJ, set later), Gen 5 a shifted cache.
+	if (strncmp(h->gameCode, "ADA", 3) == 0    // Diamond
+	 || strncmp(h->gameCode, "APA", 3) == 0    // Pearl
+	 || strncmp(h->gameCode, "CPU", 3) == 0    // Platinum
+	 || strncmp(h->gameCode, "IPK", 3) == 0    // HG
+	 || strncmp(h->gameCode, "IPG", 3) == 0) { // SS
+		tonccpy((char*)NDS_HEADER_POKEMON, hb, 0x160);
+		pkmnHeader = true;
+	} else {
+		pkmnGen5 = (strncmp(h->gameCode, "IRB", 3) == 0 || strncmp(h->gameCode, "IRA", 3) == 0 || strncmp(h->gameCode, "IRE", 3) == 0 || strncmp(h->gameCode, "IRD", 3) == 0);
+	}
 	if ((u32)h->arm9destination < 0x02400000) {
 		dscmCartRead((u32)h->arm9romOffset, (u32*)h->arm9destination, h->arm9binarySize);
 	}

@@ -339,9 +339,12 @@ void dscmCartRead(u32 src, u32* dest, size_t size) {
 	}
 	while (size > 0) {
 		readSize = size < CARD_DATA_BLOCK_SIZE ? size : CARD_DATA_BLOCK_SIZE;
+		// The card always sends a whole 0x200 block; cardPolledTransfer stores
+		// only `length` words of it (it counts words, not bytes), so the last,
+		// partial block of a read doesn't spill past the end of dest.
 		cardParamCommand(CARD_CMD_DATA_READ, src,
 			(portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(1),
-			dest, readSize);
+			dest, (readSize + 3) / 4);
 		src += readSize;
 		dest += readSize / sizeof(*dest);
 		size -= readSize;

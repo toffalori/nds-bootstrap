@@ -23,6 +23,7 @@
 
 #include "dscheevos_hooks.h"
 extern "C" int dscheevosFindSession(configuration* conf);
+extern "C" int dscheevosIsCartStub(const configuration* conf);
 
 #define REG_SCFG_EXT7 *(u32*)0x02FFFDF0
 
@@ -740,12 +741,23 @@ static int runNdsFile(configuration* conf) {
 	}
 
 	dscheevosMark("files found, checking the session (ROM hash)");
-	if (dscheevosFindSession(conf) == DSCHEEVOS_SESSION_WRONG_ROM) {
+	const int dscheevosSession = dscheevosFindSession(conf);
+	if (dscheevosSession == DSCHEEVOS_SESSION_WRONG_ROM) {
 		myConsoleDemoInit();
 		iprintf("DScheevos: this game file isn't\nthe one the session was started\nfor. Achievements are off.\n");
 		for (int i = 0; i < 60*3; i++) {
 			swiWaitForVBlank();
 		}
+	} else if (dscheevosSession == DSCHEEVOS_SESSION_NONE && dscheevosIsCartStub(conf)) {
+		// Cart mode without its session (no streamer module, or the session
+		// file couldn't be taken): the ROM file is only the cartridge's header,
+		// and the bootloader would boot it as a game.
+		if (isDSiMode()) {
+			dscheevosStage1Log("a", "stage1: cart mode without a session, stopped");
+		}
+		myConsoleDemoInit();
+		iprintf("Cheevotron couldn't start the\ncartridge. Turn the DSi off and\nstart the game again from the\nCheevotron icon.\n");
+		stop();
 	}
 
 	if (isDSiMode()) {

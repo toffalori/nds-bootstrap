@@ -176,8 +176,15 @@ void dscheevosStage1Screen(const configuration* conf) {
 // launcher (each reboot goes through it and starts a new session), so a
 // hardcore boot clears both before nds-bootstrap reads them; the game then
 // starts from its own binaries. The reset parameters and boot info stay.
+// The cartridge stub as the ROM (cart mode, dscheevosCartPaths): an SRL to
+// load from the page file, or one inside the ROM file, can't be the card.
+int dscheevosIsCartStub(const configuration* conf) {
+	static const char dir[] = DSCHEEVOS_DIR "carts/";
+	return strncmp(conf->ndsPath, dir, sizeof(dir) - 1) == 0;
+}
+
 void dscheevosSanitizeSoftReset(const configuration* conf, const char* srParamsPath) {
-	if (!dscheevosHardcorePending(conf)) {
+	if (!dscheevosHardcorePending(conf) && !dscheevosIsCartStub(conf)) {
 		return;
 	}
 	FILE* f = fopen(srParamsPath, "rb+");
@@ -247,9 +254,11 @@ int dscheevosFindSession(configuration* conf) {
 	 && stat(DSCHEEVOS_DIR "recording.bin", &stRecord) == 0 && stRecord.st_size == (off_t)DSCM_REC_FILE_SIZE) {
 		conf->dscheevosRecordCluster = stRecord.st_ino;
 	}
-	if (((const u8*)head)[DSCHEEVOS_S_HARDCORE]) {
+	if (((const u8*)head)[DSCHEEVOS_S_HARDCORE] || (((const u8*)head)[DSCHEEVOS_S_FLAGS] & DSCHEEVOS_BOOT_CART)) {
 		// hardcore: no user cheats, and no wideCheatData.bin (any AR codes put
 		// there run like cheats). AP-fix: built-in patches only, see above.
+		// Cart mode: those files belong to TWiLight Menu++'s last SD game, not
+		// to the cartridge.
 		conf->cheatSize = 0;
 		conf->wideCheatSize = 0;
 	}
