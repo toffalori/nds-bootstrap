@@ -48,6 +48,7 @@ enum {
 #define F1_HOST_INT_STATUS 0x400u
 #define F1_RX_LOOKAHEAD0   0x408u
 #define MBOX0_END          0x4000u /* extended mbox0 window ends here; last byte = EOM */
+#define HTC_EP_DATA        2u      /* best-effort data (WMI events come on 1) */
 
 /* Bounded busy-waits. One loop pass is ~10-15 ARM7 cycles, so 3000 passes
  * is ~1-1.3 ms: far above a CMD52 (~10 us) or a 128-byte block (~17 us at
@@ -56,7 +57,7 @@ enum {
 #define POLL_SPINS 2500u   /* wait-loop passes for a whole poll (~1 ms), shared by every wait */
 #define POLL_LINES 4u       /* no new RX frame once a poll has used this many scanlines */
 #define BACKOFF_POLLS 60u   /* after an SDIO error: skip ~1 s of VBlanks */
-#define DEAD_AFTER 5u       /* consecutive failed polls: give up (ARM9 sees dead=1) */
+#define DEAD_AFTER 5u       /* consecutive failed polls: the ARM9 sees dead=1 until a poll goes through */
 
 static shim_shared_t* sh;
 static uint32_t backoff, fails;
@@ -133,7 +134,8 @@ static void setup_blocks(uint32_t nblk, uint16_t irq32)
   R16(IRQ32) = irq32;              /* bit1: 32-bit mode, bit10: clear FIFO */
 }
 
-/* CMD53 IO_RW_EXTENDED, function 1, block mode, incrementing address. */
+/* CMD53 IO_RW_EXTENDED, function 1, block mode, incrementing address.
+ * dst 0: the blocks are read out and thrown away. */
 static int cmd53_read(uint32_t addr, uint32_t* dst, uint32_t nblk)
 {
   if (wait_idle()) { fail(3); return -1; }
@@ -143,8 +145,11 @@ static int cmd53_read(uint32_t addr, uint32_t* dst, uint32_t nblk)
     while (!(R16(IRQ32) & IRQ32_RXFULL)) {
       if ((R16(STAT1) & STAT1_ERR) || !spin()) { fail(4); return -1; }
     }
-    for (uint32_t w = 0; w < SHIM_BLOCK / 4; w++)
-      *dst++ = R32(FIFO32);
+    for (uint32_t w = 0; w < SHIM_BLOCK / 4; w++) {
+      uint32_t v = R32(FIFO32);
+      if (dst)
+        *dst++ = v;
+    }
   }
   if (wait_stat0(STAT0_DATAEND)) { fail(5); return -1; }
   R16(STAT0) = 0;
@@ -212,12 +217,21 @@ static uint32_t read_lookahead(void)
 /* One pass, inside the game's VBlank IRQ: at most one TX frame, then up to
  * SHIM_RX_PER_POLL RX frames (one if a frame was sent), while the poll is
  * under POLL_LINES scanlines. All waits share one spin budget, and the first
- * error ends the poll. Returns a bitmask of what it did (1 = sent, 2 = received). */
+ * error ends the poll. Returns a bitmask of what it did (1 = sent, 2 = received).
+ *
+ * RX never stays in the chip: the frames it holds for the host take the
+ * buffers its radio receives into, and with those gone it misses the AP's
+ * beacons and drops the link (firmware reason 2). So when the ARM9 falls
+ * behind (the game gave it no idle time for a while) and the ring is full,
+ * the frame is read out and thrown away. The ring's last free slot is kept
+ * for WMI events and EAPOL: a plain data frame is thrown away there too.
+ * UDP and TCP live with the loss; a lost connect event or key message would
+ * stall a rejoin. */
 uint32_t shim_poll(void)
 {
   uint32_t did = 0, rx_max = SHIM_RX_PER_POLL;
   uint32_t line0 = REG_VCOUNT_SHIM;
-  if (!sh || !sh->run || sh->dead)
+  if (!sh || !sh->run)
     return 0;
   if (backoff) {
     backoff--;
@@ -250,10 +264,7 @@ uint32_t shim_poll(void)
     if (!(st & 1))                 /* mailbox 0 empty */
       break;
     uint32_t head = sh->rx_head;
-    if (head - sh->rx_tail >= SHIM_RX_SLOTS) {
-      sh->stats.rx_ring_full++;    /* leave it in the chip; it buffers / drops */
-      break;
-    }
+    uint32_t used = head - sh->rx_tail;
     uint32_t la = read_lookahead();
     uint32_t len = la >> 16;
     uint32_t nblk = (len + 6 + SHIM_BLOCK - 1) / SHIM_BLOCK;
@@ -262,21 +273,32 @@ uint32_t shim_poll(void)
       break;
     }
     shim_slot_rx_t* s = &sh->rx[head % SHIM_RX_SLOTS];
-    if (cmd53_read(MBOX0_END - nblk * SHIM_BLOCK, (uint32_t*)s->data, nblk))
+    uint32_t* dst = used < SHIM_RX_SLOTS ? (uint32_t*)s->data : 0;
+    if (cmd53_read(MBOX0_END - nblk * SHIM_BLOCK, dst, nblk))
       break;
+    did |= 2;
+    /* the HTC header's endpoint (lookahead byte 0); the ethertype after the
+     * 6-byte HTC header, the 2-byte WMI data header, 802.3 and LLC/SNAP */
+    if (!dst || (used == SHIM_RX_SLOTS - 1 && (la & 0xFF) == HTC_EP_DATA
+                 && !(s->data[28] == 0x88 && s->data[29] == 0x8E))) {
+      sh->stats.rx_ring_full++;
+      continue;
+    }
     s->len = nblk * SHIM_BLOCK;
     s->lookahead = la;
     sh->rx_head = head + 1;
     sh->stats.rx_frames++;
-    did |= 2;
   }
 
+  /* dead is not for good: a chip that answers again (after a firmware
+   * hiccup, say) gets its link back, at one try a second meanwhile */
   if (sh->stats.sdio_errors != errors_before) {
     backoff = BACKOFF_POLLS;
     if (++fails >= DEAD_AFTER)
       sh->dead = 1;
   } else {
     fails = 0;
+    sh->dead = 0;
   }
   return did;
 }
