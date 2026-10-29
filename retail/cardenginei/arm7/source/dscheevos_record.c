@@ -23,6 +23,8 @@
  * is skipped, and a write whose end another command cleared away (they wait
  * for the card to finish first, so the data is safe) is written again.
  */
+/* size over speed: the card engine has 61 KB of WRAM in all */
+#pragma GCC optimize ("Os")
 #include <stddef.h>
 #include <nds/ndstypes.h>
 #include "my_sdmmc.h"

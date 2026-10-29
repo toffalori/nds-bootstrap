@@ -10,6 +10,8 @@
  *
  * Uses CPU (PIO) access to the 32-bit data FIFO, no NDMA, no interrupts.
  */
+/* size over speed: the card engine has 61 KB of WRAM in all */
+#pragma GCC optimize ("Os")
 #include <stdint.h>
 #include "dscm_shim.h"
 #include "shim.h"
