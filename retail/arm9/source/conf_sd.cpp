@@ -1731,17 +1731,23 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 			}
 
 			dscheevosMark("ce7 and ce9 read");
-			bool found = (access(pageFilePath.c_str(), F_OK) == 0);
+			// DScheevos: sizing the page file (a byte written at its end) took
+			// 0.9 s at every start; it only needs doing while it is too small
+			struct stat stPageSize;
+			const bool sized = (stat(pageFilePath.c_str(), &stPageSize) == 0 && stPageSize.st_size >= twlPageFileSize);
+			bool found = sized || (access(pageFilePath.c_str(), F_OK) == 0);
 			if (!found) {
 				myConsoleDemoInit();
 				iprintf("Creating pagefile.sys\n");
 				iprintf("Please wait...\n");
 			}
 
-			cebin = fopen(pageFilePath.c_str(), found ? "r+" : "wb");
-			fseek(cebin, twlPageFileSize - 1, SEEK_SET);
-			fputc('\0', cebin);
-			fclose(cebin);
+			if (!sized) {
+				cebin = fopen(pageFilePath.c_str(), found ? "r+" : "wb");
+				fseek(cebin, twlPageFileSize - 1, SEEK_SET);
+				fputc('\0', cebin);
+				fclose(cebin);
+			}
 
 			if (!found) {
 				consoleClear();
@@ -1970,9 +1976,11 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 					igmPals[i] = VRAM_E[igmPals[i] % 0x8000];
 				}
 			}
+			dscheevosMark("screenshots counted");
 			fwrite((u8*)igmText, 1, 0xA000, cebin);
 			fclose(cebin);
 			toncset((u8*)igmText, 0, 0xA000);
+			dscheevosMark("in-game menu text in the page file");
 		}
 
 		// Load DS blowfish
