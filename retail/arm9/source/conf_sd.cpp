@@ -186,7 +186,8 @@ extern "C" int dscheevosHardcorePending(const configuration* conf);
 extern "C" int dscheevosSessionPending(const configuration* conf);
 extern "C" void dscheevosSanitizeSoftReset(const configuration* conf, const char* srParamsPath);
 extern "C" void dscheevosStage1Screen(const configuration* conf);
-extern "C" void dscheevosCartPaths(configuration* conf);
+extern "C" int dscheevosCartPaths(configuration* conf);
+static bool dscheevosCartBoot = false;	// Cheevotron cart mode: the bootloader starts the card itself
 extern "C" void dscheevosMark(const char* what);	// main.cpp
 // extern void loadApFixPostCardRead(configuration* conf, const char* bootstrapPath, const char* romTid, const u16 headerCRC);
 extern void loadMobiclipOffsets(configuration* conf, const char* bootstrapPath, const char* romTid, const u8 romVersion, const u16 headerCRC);
@@ -371,7 +372,7 @@ static void load_conf(configuration* conf, const char* fn) {
 	conf->prvPath = strdup(config_file.fetch("NDS-BOOTSTRAP", "PRV_PATH").c_str());
 
 	// Cheevotron cart mode: the ROM and save paths are the cartridge's (dscheevos_session.c)
-	dscheevosCartPaths(conf);
+	dscheevosCartBoot = dscheevosCartPaths(conf);
 
 	// Banner SAV path
 	conf->bnrPath = strdup(config_file.fetch("NDS-BOOTSTRAP", "BNR_PATH").c_str());
@@ -1458,7 +1459,15 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 		fclose(donorNdsFile);
 
 		if (!conf->bootstrapOnFlashcard && !conf->gameOnFlashcard && !conf->saveOnFlashcard) {
-			if (romTid[0] != 'I' && memcmp(romTid, "UZP", 3) != 0 && memcmp(romTid, "HND", 3) != 0 && memcmp(romTid, "UEI", 3) != 0) {
+			if (dscheevosCartBoot) {
+				// Cheevotron cart mode: the bootloader powers the card up and starts
+				// it from off for every game (dscheevos_cardboot.c), and the game
+				// runs from it, IR included. The header read below is for an IR
+				// game run from SD (power cycle, then ARM9-polled card reads); with
+				// HeartGold's card in cart mode this stage froze in it.
+				disableSlot1();
+				dscheevosStage1Log("a", "stage1: cart mode, Slot-1 off for the bootloader");
+			} else if (romTid[0] != 'I' && memcmp(romTid, "UZP", 3) != 0 && memcmp(romTid, "HND", 3) != 0 && memcmp(romTid, "UEI", 3) != 0) {
 				disableSlot1();
 			} else {
 				// Initialize card and read header, HGSS IR doesn't work if you don't read the full header
@@ -2012,7 +2021,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 
 		//bool wideCheatFound = (access(wideCheatFilePath.c_str(), F_OK) == 0);
 
-		dscheevosMark("in-game menu loaded");
+		dscheevosStage1Log("a", "stage1: in-game menu loaded");	// written now: places a hang before or after the engines
 		FILE* bootstrapImages = fopen("nitro:/bootloader_images.lz77", "rb");
 		if (bootstrapImages) {
 			fread(lz77ImageBuffer, 1, sizeof_lz77ImageBuffer, bootstrapImages);
