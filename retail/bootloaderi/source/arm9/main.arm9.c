@@ -76,27 +76,86 @@ volatile u32 arm9_screenTrace = 0;
 volatile u32 arm9_stage1Ticks = 0;
 volatile u32 arm9_cardProbe = 0;
 volatile u32 arm9_cardProbeFlags = 0;
+volatile u32 arm9_cardArgs[4] = {0};
 
 #ifndef LOADERTYPE2
-// Cheevotron cart diagnostic: a data-mode chip ID read (0xB8) with the ARM9 on
-// the Slot-1 bus. It returns the card's ID only if the KEY2 session the ARM7's
-// handshake left is live for the ARM9 too (the game reads from the ARM9).
-// Registers and immediates only: this runs from arm9ram.
-static inline u32 arm9_dscmCardChipId(u32 flags) {
-	u32 id = 0xFFFFFFFF;
-	u32 guard = 0x100000;
-	*(vu8*)0x040001A1 = 0x80;              // AUXSPICNT: slot enabled, ROM mode
-	*(vu8*)0x040001A8 = 0xB8;              // the command, parameters 0
-	for (int i = 1; i < 8; i++) {
-		*(vu8*)(0x040001A8 + i) = 0;
+// Cheevotron native cart mode: the DSi keeps a KEY2 session per CPU (measured:
+// after the ARM7's handshake an ARM9 read got 0xFFFFFFFF, and knocked the card
+// out of step for the ARM7 too). The game reads its card from the ARM9, so
+// the ARM9 seeds KEY2 and does every card transfer from then on, as NitroHax
+// does. Registers and immediates only: this runs from arm9ram.
+
+// One card transfer: the 8 command bytes (as at 0x040001A8, from two words),
+// ROMCTRL, and up to `words` of the reply kept at dest (the rest read out).
+static void arm9_dscmCardXfer(u32 lo, u32 hi, u32 flags, u32* dest, u32 words) {
+	u32 guard = 0x1000000;   // never hang the boot on a card that stops answering
+	*(vu8*)0x040001A1 = 0xC0;              // AUXSPICNT: slot enabled, ROM mode (as libnds' cardWriteCommand)
+	for (int i = 0; i < 4; i++) {
+		*(vu8*)(0x040001A8 + i) = (u8)(lo >> (i * 8));
+		*(vu8*)(0x040001AC + i) = (u8)(hi >> (i * 8));
 	}
 	*(vu32*)0x040001A4 = flags;            // ROMCTRL: go
 	do {
 		if (*(vu32*)0x040001A4 & BIT(23)) {  // a word ready
-			id = *(vu32*)0x04100010;
+			const u32 data = *(vu32*)0x04100010;
+			if (words) {
+				*dest++ = data;
+				words--;
+			}
 		}
 	} while ((*(vu32*)0x040001A4 & BIT(31)) && --guard);
+}
+
+// A data-mode chip ID read (0xB8): the card's ID only while the ARM9's KEY2
+// session is live (logged before the game starts).
+static inline u32 arm9_dscmCardChipId(u32 flags) {
+	u32 id = 0xFFFFFFFF;
+	arm9_dscmCardXfer(0xB8, 0, flags, &id, 1);
 	return id;
+}
+
+// The KEY2 part of the handshake, as the ARM7 laid it out (DSCM_CARD_OP_*).
+static void arm9_dscmCardScript(const u32* op) {
+	for (;;) {
+		if (op[0] == DSCM_CARD_OP_XFER) {
+			arm9_dscmCardXfer(op[1], op[2], op[3], (u32*)op[4], op[5]);
+			op += 6;
+		} else if (op[0] == DSCM_CARD_OP_WAIT) {
+			u32 lines = op[1];
+			u16 last = REG_VCOUNT;
+			while (lines) {
+				const u16 now = REG_VCOUNT;
+				if (now != last) {
+					last = now;
+					lines--;
+				}
+			}
+			op += 2;
+		} else if (op[0] == DSCM_CARD_OP_SEED) {
+			*(vu32*)0x040001A4 = 0;
+			*(vu32*)0x040001B0 = op[1];
+			*(vu32*)0x040001B4 = op[2];
+			*(vu16*)0x040001B8 = (u16)op[3];
+			*(vu16*)0x040001BA = (u16)op[4];
+			*(vu32*)0x040001A4 = BIT(29) | BIT(15) | BIT(14) | BIT(13);   // nRESET, apply the seed, KEY2 on
+			op += 5;
+		} else {
+			return;
+		}
+	}
+}
+
+// Data reads (0xB7) of `len` bytes from card offset src, a 0x200 block each;
+// only the requested words of the last block are stored.
+static void arm9_dscmCardRead(u32 src, u32* dest, u32 len, u32 flags) {
+	while (len > 0) {
+		const u32 n = (len < 0x200) ? len : 0x200;
+		const u32 lo = 0xB7 | ((src >> 24) & 0xFF) << 8 | ((src >> 16) & 0xFF) << 16 | ((src >> 8) & 0xFF) << 24;
+		arm9_dscmCardXfer(lo, src & 0xFF, flags, dest, (n + 3) >> 2);
+		src += n;
+		dest += n >> 2;
+		len -= n;
+	}
 }
 #endif
 #endif
@@ -608,9 +667,18 @@ void arm9_main(void) {
 		}
 #ifndef LOADERTYPE2
 		if (arm9_stateFlag == ARM9_DSCM_CARDPROBE) {
-			REG_EXMEMCNT &= ~BIT(11);              // Slot-1 to the ARM9, as the game takes it
+			REG_EXMEMCNT &= ~BIT(11);              // Slot-1 to the ARM9 (it keeps it: its KEY2 session)
 			arm9_cardProbe = arm9_dscmCardChipId(arm9_cardProbeFlags);
-			REG_EXMEMCNT |= BIT(11);               // and back to the ARM7
+			arm9_stateFlag = ARM9_READY;
+		}
+		if (arm9_stateFlag == ARM9_DSCM_CARDSCRIPT) {
+			REG_EXMEMCNT &= ~BIT(11);
+			arm9_dscmCardScript((const u32*)arm9_cardArgs[0]);
+			arm9_stateFlag = ARM9_READY;
+		}
+		if (arm9_stateFlag == ARM9_DSCM_CARDREAD) {
+			REG_EXMEMCNT &= ~BIT(11);
+			arm9_dscmCardRead(arm9_cardArgs[0], (u32*)arm9_cardArgs[1], arm9_cardArgs[2], arm9_cardArgs[3]);
 			arm9_stateFlag = ARM9_READY;
 		}
 #endif

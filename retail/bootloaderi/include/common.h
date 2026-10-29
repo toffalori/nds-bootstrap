@@ -65,6 +65,8 @@
 #define ARM9_DSCHEEVOS_INIT 13
 #define ARM9_DSCHEEVOS_PLACARD 14
 #define ARM9_DSCM_CARDPROBE 15
+#define ARM9_DSCM_CARDSCRIPT 16   // Cheevotron native cart: the KEY2 part of the handshake (arm9_cardArgs[0]: the script)
+#define ARM9_DSCM_CARDREAD 17     // and a data read (arm9_cardArgs: card offset, destination, bytes, ROMCTRL)
 //};
 
 extern u32* arm9executeAddress;
@@ -77,6 +79,15 @@ extern volatile u32 arm9_screenTrace;
 extern volatile u32 arm9_stage1Ticks;
 extern volatile u32 arm9_cardProbe;        // Cheevotron cart: the chip ID the ARM9 read (ARM9_DSCM_CARDPROBE)
 extern volatile u32 arm9_cardProbeFlags;   // and the ROMCTRL value it read it with
+extern volatile u32 arm9_cardArgs[4];      // ARM9_DSCM_CARDSCRIPT / ARM9_DSCM_CARDREAD
+
+// The card script ARM9_DSCM_CARDSCRIPT runs (u32 words in main RAM), ended by
+// DSCM_CARD_OP_END. The DSi keeps a KEY2 session per CPU: the one the game's
+// ARM9 reads with must be seeded and used by the ARM9 alone.
+#define DSCM_CARD_OP_END   0   // -
+#define DSCM_CARD_OP_XFER  1   // command bytes 0-3 and 4-7 (as at 0x040001A8), ROMCTRL, destination (0: none), words to keep
+#define DSCM_CARD_OP_WAIT  2   // VCOUNT changes to wait
+#define DSCM_CARD_OP_SEED  3   // values for 0x040001B0, 0x040001B4, 0x040001B8, 0x040001BA
 extern u32 arm9_SCFG_EXT;
 extern u16 arm9_SCFG_CLK;
 extern volatile bool esrbScreenPrepared;

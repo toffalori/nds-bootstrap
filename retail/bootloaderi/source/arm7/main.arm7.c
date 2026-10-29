@@ -2850,26 +2850,14 @@ int arm7_main(void) {
 	}
 #ifndef LOADERTYPE2
 	if (dscheevosCartNative()) {
-		// Diagnostic: the game didn't start in native mode. Is the KEY2 session
-		// the ARM7's handshake left live for the ARM9, which the game reads from?
-		// Data-mode chip ID reads by the ARM7, the ARM9, the ARM7 again: each is
-		// the card's ID only while the session is live for that CPU.
-		const u32 a7 = dscmCartProbeChipId();
-		arm9_cardProbeFlags = dscmCartProbeFlags();
-		arm9_cardProbe = 0x11111111;
-		arm9_stateFlag = ARM9_DSCM_CARDPROBE;
-		while (arm9_stateFlag != ARM9_READY);
-		const u32 a7again = dscmCartProbeChipId();
-		dbg_printf("DScheevos cart probe: chip ");
+		// The game reads from the ARM9, in the ARM9's KEY2 session (the DSi
+		// keeps one per CPU: an ARM9 read after an ARM7 handshake got
+		// FFFFFFFF). A data-mode chip ID read there, last thing before the game:
+		// the card's ID if that session is live.
+		dbg_printf("DScheevos cart: ARM9 card check, chip ");
 		dbg_hexa(cartChipID);
-		dbg_printf(" arm7 ");
-		dbg_hexa(a7);
-		dbg_printf(" arm9 ");
-		dbg_hexa(arm9_cardProbe);
-		dbg_printf(" arm7 again ");
-		dbg_hexa(a7again);
-		dbg_printf(" flags ");
-		dbg_hexa(arm9_cardProbeFlags);
+		dbg_printf(" read ");
+		dbg_hexa(dscmCartProbeChipId());
 		dbg_printf("\n");
 	}
 #endif

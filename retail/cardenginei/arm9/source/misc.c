@@ -25,6 +25,7 @@
 #include <nds/ipc.h>
 #include <nds/timers.h>
 #include <nds/memory.h> // tNDSHeader
+#include <nds/card.h>   // REG_ROMCTRL: the native cart reset's card drain
 #include "dscheevos_hooks.h"
 #include "tonccpy.h"
 #include "nds_header.h"
@@ -186,6 +187,23 @@ void reset(u32 param, u32 tid2) {
 		(*(void (**)(void))(DSCHEEVOS_LOCATION + DSCHEEVOS_H_RESET))();
 	}
 #endif
+#ifndef TWLSDK
+	if (ce9->valueBits & DSCHEEVOS_CE9_CART_NATIVE) {
+		// Cheevotron native cart mode: the KEY2 session is this CPU's (the DSi
+		// keeps one per CPU). A card read of the game's may still be running:
+		// stop its DMA and read the rest out here, or the card and the
+		// controller fall out of step and the restarted game reads garbage.
+		for (int i = 0; i < 4; i++) {
+			DMA_CR(i) = 0;
+		}
+		for (u32 guard = 0x100000; (REG_ROMCTRL & CARD_BUSY) && guard; guard--) {
+			if (REG_ROMCTRL & CARD_DATA_READY) {
+				const u32 data = REG_CARD_DATA_RD;
+				(void)data;
+			}
+		}
+	}
+#endif
 	sysSetCardOwner(false);	// Give Slot-1 access to arm7
 #ifndef TWLSDK
 	const u32 resetParams = ((ce9->valueBits & isSdk5) ? RESET_PARAM_SDK5 : RESET_PARAM);
@@ -345,9 +363,7 @@ void reset(u32 param, u32 tid2) {
 		while (REG_VCOUNT == 191);
 	}
 
-	// Cheevotron native cart mode: the ARM7 keeps Slot-1, as at the first boot:
-	// the game's ARM7 polls the card's ID before its ARM9 first asks for the bus.
-	sysSetCardOwner(!(ce9->valueBits & DSCHEEVOS_CE9_CART_NATIVE));	// Give Slot-1 access back to arm9
+	sysSetCardOwner(true);	// Give Slot-1 access back to arm9
 
 	#ifndef GSDD
 	if ((ce9->valueBits & isDlp) || *(u32*)(resetParams+0xC) > 0) {

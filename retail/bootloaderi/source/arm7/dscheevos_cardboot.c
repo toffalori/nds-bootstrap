@@ -21,6 +21,7 @@
 */
 
 #include "dscheevos_cardboot.h"
+#include "common.h"   // arm9_stateFlag, ARM9_DSCM_CARD*, DSCM_CARD_OP_*
 
 #include <nds/ndstypes.h>
 #include <nds/card.h>
@@ -42,6 +43,8 @@ extern void dscmReadBios(u8* dest, u32 src, u32 size);
 /* bootloader debug log (debug_file.h) */
 extern u32 dbg_printf(const char* message);
 extern u32 dbg_hexa(u32 n);
+/* dscheevos_hooks.c */
+extern bool dscheevosCartNative(void);
 
 /* ---- KEY1 blowfish (NitroHax encryption.c) ---- */
 
@@ -195,12 +198,60 @@ static void createEncryptedCommand(u8 command, u8* cmdData, u32 block) {
 
 // Timer 2: timers 0 and 1 are the bootloader's boot clock (arm7_main), which
 // this delay stopped on timer 0, so the log's stamps lost time from here on.
-static void cardDelay(u16 readTimeout) {
+static void cardDelayArm7(u16 readTimeout) {
 	TIMER_DATA(2) = 0 - (((readTimeout & 0x3FFF) + 3));
 	TIMER_CR(2) = TIMER_DIV_256 | TIMER_ENABLE;
 	while (TIMER_DATA(2) != 0xFFFF);
 	TIMER_CR(2) = 0;
 	TIMER_DATA(2) = 0;
+}
+
+/* Native cart mode: the DSi keeps a KEY2 session per CPU, and the game reads
+ * its card from the ARM9. So from the KEY2 seed on, the handshake's transfers
+ * and every card read after it run on the ARM9 (main.arm9.c): the ARM7 lays
+ * them out as a script (DSCM_CARD_OP_*, common.h) in the module carve-out,
+ * free during the cart boot like keybuf. Engine mode keeps it all on the ARM7,
+ * whose card engine then serves the game's reads. */
+static bool toArm9 = false;
+static u32* const cardScript = (u32*)0x02F0C000;
+static u32 scriptLen = 0;
+#define DSCM_CART_BOUNCE      ((u32*)0x02F10000)   /* ARM9 reads for a WRAM destination */
+#define DSCM_CART_BOUNCE_SIZE 0x10000
+
+static void arm9Do(int state) {
+	while (arm9_stateFlag != ARM9_READY);
+	arm9_stateFlag = state;
+	while (arm9_stateFlag != ARM9_READY);
+}
+
+/* A transfer: ARM7 now, or appended to the ARM9's script. words = the reply
+ * words kept at dest. */
+static void cardXfer(const u8* cmdData, u32 flags, u32* dest, u32 words) {
+	if (!toArm9) {
+		cardPolledTransfer(flags, dest, words, cmdData);
+		return;
+	}
+	u32* s = cardScript + scriptLen;
+	s[0] = DSCM_CARD_OP_XFER;
+	s[1] = cmdData[7] | cmdData[6] << 8 | cmdData[5] << 16 | (u32)cmdData[4] << 24;   // as at 0x040001A8
+	s[2] = cmdData[3] | cmdData[2] << 8 | cmdData[1] << 16 | (u32)cmdData[0] << 24;
+	s[3] = flags;
+	s[4] = (u32)dest;
+	s[5] = dest ? words : 0;
+	scriptLen += 6;
+}
+
+/* The card's settle delay: in VCOUNT changes on the ARM9 (a line is 63.6 us,
+ * a timer tick at /256 7.6 us: ticks / 8 is a little longer, +2 for the line
+ * the wait starts in). */
+static void cardDelay(u16 readTimeout) {
+	if (!toArm9) {
+		cardDelayArm7(readTimeout);
+		return;
+	}
+	cardScript[scriptLen] = DSCM_CARD_OP_WAIT;
+	cardScript[scriptLen + 1] = ((((u32)readTimeout & 0x3FFF) + 3) >> 3) + 2;
+	scriptLen += 2;
 }
 
 int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {
@@ -257,22 +308,37 @@ int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {
 		cardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
 	}
 
-	REG_ROMCTRL = 0;
-	REG_CARD_1B0 = cardSeedBytes[ndsHeader->deviceType & 0x07] | (key1data.nnn << 15) | (key1data.mmm << 27) | 0x6000;
-	REG_CARD_1B4 = 0x879b9b05;
-	REG_CARD_1B8 = key1data.mmm >> 5;
-	REG_CARD_1BA = 0x5c;
-	REG_ROMCTRL = CARD_nRESET | CARD_SEC_SEED | CARD_SEC_EN | CARD_SEC_DAT;
+	// From the seed on: the ARM9 in native mode (see cardXfer)
+	toArm9 = dscheevosCartNative();
+	scriptLen = 0;
+	{
+		const u32 seed1B0 = cardSeedBytes[ndsHeader->deviceType & 0x07] | (key1data.nnn << 15) | (key1data.mmm << 27) | 0x6000;
+		if (toArm9) {
+			cardScript[0] = DSCM_CARD_OP_SEED;
+			cardScript[1] = seed1B0;
+			cardScript[2] = 0x879b9b05;
+			cardScript[3] = key1data.mmm >> 5;
+			cardScript[4] = 0x5c;
+			scriptLen = 5;
+		} else {
+			REG_ROMCTRL = 0;
+			REG_CARD_1B0 = seed1B0;
+			REG_CARD_1B4 = 0x879b9b05;
+			REG_CARD_1B8 = key1data.mmm >> 5;
+			REG_CARD_1BA = 0x5c;
+			REG_ROMCTRL = CARD_nRESET | CARD_SEC_SEED | CARD_SEC_EN | CARD_SEC_DAT;
+		}
+	}
 
 	portFlagsKey1 |= CARD_SEC_EN | CARD_SEC_DAT;
 
 	createEncryptedCommand(CARD_CMD_SECURE_CHIPID, cmdData, 0);
 	if (normalChip) {
-		cardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+		cardXfer(cmdData, portFlagsKey1, NULL, 0);
 		cardDelay(ndsHeader->readTimeout);
-		cardPolledTransfer(portFlagsKey1 | CARD_BLK_SIZE(7), NULL, 0, cmdData);
+		cardXfer(cmdData, portFlagsKey1 | CARD_BLK_SIZE(7), NULL, 0);
 	} else {
-		cardPolledTransfer(portFlagsKey1 | CARD_BLK_SIZE(7), NULL, 0, cmdData);
+		cardXfer(cmdData, portFlagsKey1 | CARD_BLK_SIZE(7), NULL, 0);
 	}
 
 	secureArea = secureAreaData;
@@ -282,25 +348,34 @@ int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {
 	for (secureBlockNumber = 4; secureBlockNumber < 8; secureBlockNumber++) {
 		createEncryptedCommand(CARD_CMD_SECURE_READ, cmdData, secureBlockNumber);
 		if (normalChip) {
-			cardPolledTransfer(portFlagsSecRead, NULL, 0, cmdData);
+			cardXfer(cmdData, portFlagsSecRead, NULL, 0);
 			cardDelay(ndsHeader->readTimeout);
 			for (i = 8; i > 0; i--) {
-				cardPolledTransfer(portFlagsSecRead | CARD_BLK_SIZE(1), secureArea, 0x200, cmdData);
+				cardXfer(cmdData, portFlagsSecRead | CARD_BLK_SIZE(1), secureArea, 0x200 / sizeof(u32));
 				secureArea += 0x200 / sizeof(u32);
 			}
 		} else {
-			cardPolledTransfer(portFlagsSecRead | CARD_BLK_SIZE(4) | CARD_SEC_LARGE, secureArea, 0x1000, cmdData);
+			cardXfer(cmdData, portFlagsSecRead | CARD_BLK_SIZE(4) | CARD_SEC_LARGE, secureArea, 0x1000 / sizeof(u32));
 			secureArea += 0x1000 / sizeof(u32);
 		}
 	}
 
 	createEncryptedCommand(CARD_CMD_DATA_MODE, cmdData, 0);
 	if (normalChip) {
-		cardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+		cardXfer(cmdData, portFlagsKey1, NULL, 0);
 		cardDelay(ndsHeader->readTimeout);
-		cardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+		cardXfer(cmdData, portFlagsKey1, NULL, 0);
 	} else {
-		cardPolledTransfer(portFlagsKey1, NULL, 0, cmdData);
+		cardXfer(cmdData, portFlagsKey1, NULL, 0);
+	}
+
+	if (toArm9) {
+		cardScript[scriptLen] = DSCM_CARD_OP_END;
+		arm9_cardArgs[0] = (u32)cardScript;
+		arm9Do(ARM9_DSCM_CARDSCRIPT);
+		dbg_printf("  cart KEY2 handshake on the ARM9, script words ");
+		dbg_hexa(scriptLen);
+		dbg_printf("\n");
 	}
 
 	dbg_printf("  cart secure read ok, enc=");
@@ -330,6 +405,12 @@ u32 dscmCartProbeFlags(void) {
 
 u32 dscmCartProbeChipId(void) {
 	u32 id = 0xFFFFFFFF;
+	if (toArm9) {   // native mode: only the ARM9 may talk to the card
+		arm9_cardProbeFlags = dscmCartProbeFlags();
+		arm9_cardProbe = 0x11111111;
+		arm9Do(ARM9_DSCM_CARDPROBE);
+		return arm9_cardProbe;
+	}
 	cardParamCommand(0xB8, 0, dscmCartProbeFlags(), &id, 1);
 	return id;
 }
@@ -344,6 +425,26 @@ void dscmCartRead(u32 src, u32* dest, size_t size) {
 		src += readSize;
 		dest += readSize / sizeof(*dest);
 		size -= readSize;
+	}
+	if (toArm9) {   // native mode: the ARM9 holds the KEY2 session
+		// Main RAM is the same for both CPUs; WRAM (the file table goes to
+		// 0x03700000) may not be, so that comes through a main RAM buffer.
+		const bool mainRam = (u32)dest - 0x02000000 < 0x01000000;
+		while (size > 0) {
+			const u32 n = (mainRam || size < DSCM_CART_BOUNCE_SIZE) ? size : DSCM_CART_BOUNCE_SIZE;
+			arm9_cardArgs[0] = src;
+			arm9_cardArgs[1] = mainRam ? (u32)dest : (u32)DSCM_CART_BOUNCE;
+			arm9_cardArgs[2] = n;
+			arm9_cardArgs[3] = (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(1);
+			arm9Do(ARM9_DSCM_CARDREAD);
+			if (!mainRam) {
+				memcpy(dest, DSCM_CART_BOUNCE, n);
+			}
+			src += n;
+			dest += n / sizeof(*dest);
+			size -= n;
+		}
+		return;
 	}
 	while (size > 0) {
 		readSize = size < CARD_DATA_BLOCK_SIZE ? size : CARD_DATA_BLOCK_SIZE;
