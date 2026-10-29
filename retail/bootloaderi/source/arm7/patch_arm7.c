@@ -831,11 +831,9 @@ u32 patchCardNdsArm7(
 
 	const char* romTid = getRomTid(ndsHeader);
 
-	// Cheevotron native cart mode: the cartridge is really there, so the game's
-	// own pull-out check runs as on a stock boot.
-	extern bool dscheevosCartNative(void);
-	if (dscheevosCartNative()) {
-	} else if ((strncmp(romTid, "UOR", 3) == 0 && !saveOnFlashcard)
+	// (Cheevotron native cart mode patches it too: an ARM7 card ID read could
+	// put the card out of step with the ARM9's KEY2 session.)
+	if ((strncmp(romTid, "UOR", 3) == 0 && !saveOnFlashcard)
 	|| (strncmp(romTid, "UXB", 3) == 0 && !saveOnFlashcard)
 	|| (!ROMinRAM && !gameOnFlashcard)) {
 		patchCardCheckPullOut(ce7, ndsHeader, moduleParams);

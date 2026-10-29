@@ -87,8 +87,11 @@ volatile u32 arm9_cardArgs[4] = {0};
 
 // One card transfer: the 8 command bytes (as at 0x040001A8, from two words),
 // ROMCTRL, and up to `words` of the reply kept at dest (the rest read out).
+static u32 arm9_dscmWordsSeen = 0;   // data words the last transfer delivered (diagnostic)
+
 static void arm9_dscmCardXfer(u32 lo, u32 hi, u32 flags, u32* dest, u32 words) {
 	u32 guard = 0x1000000;   // never hang the boot on a card that stops answering
+	arm9_dscmWordsSeen = 0;
 	*(vu8*)0x040001A1 = 0xC0;              // AUXSPICNT: slot enabled, ROM mode (as libnds' cardWriteCommand)
 	for (int i = 0; i < 4; i++) {
 		*(vu8*)(0x040001A8 + i) = (u8)(lo >> (i * 8));
@@ -98,6 +101,7 @@ static void arm9_dscmCardXfer(u32 lo, u32 hi, u32 flags, u32* dest, u32 words) {
 	do {
 		if (*(vu32*)0x040001A4 & BIT(23)) {  // a word ready
 			const u32 data = *(vu32*)0x04100010;
+			arm9_dscmWordsSeen++;
 			if (words) {
 				*dest++ = data;
 				words--;
@@ -122,8 +126,9 @@ static void arm9_dscmCardScript(const u32* op) {
 			op += 6;
 		} else if (op[0] == DSCM_CARD_OP_WAIT) {
 			u32 lines = op[1];
+			u32 guard = 0x4000000;   // bounded, even with no display clock
 			u16 last = REG_VCOUNT;
-			while (lines) {
+			while (lines && --guard) {
 				const u16 now = REG_VCOUNT;
 				if (now != last) {
 					last = now;
@@ -667,8 +672,22 @@ void arm9_main(void) {
 		}
 #ifndef LOADERTYPE2
 		if (arm9_stateFlag == ARM9_DSCM_CARDPROBE) {
+			// arm9_cardArgs in: [0] 1 = also hand the bus to the ARM7 and back and
+			// read again (into [1]); out: [2] words the first read delivered,
+			// [3] ROMCTRL after it
 			REG_EXMEMCNT &= ~BIT(11);              // Slot-1 to the ARM9 (it keeps it: its KEY2 session)
 			arm9_cardProbe = arm9_dscmCardChipId(arm9_cardProbeFlags);
+			arm9_cardArgs[2] = arm9_dscmWordsSeen;
+			arm9_cardArgs[3] = *(vu32*)0x040001A4;
+			if (arm9_cardArgs[0] == 1) {
+				REG_EXMEMCNT |= BIT(11);
+				REG_EXMEMCNT &= ~BIT(11);
+				arm9_cardArgs[1] = arm9_dscmCardChipId(arm9_cardProbeFlags);
+			}
+			arm9_stateFlag = ARM9_READY;
+		}
+		if (arm9_stateFlag == ARM9_DSCM_CARDTOARM7) {
+			REG_EXMEMCNT |= BIT(11);               // the game starts with the ARM7 on Slot-1, as on a stock boot
 			arm9_stateFlag = ARM9_READY;
 		}
 		if (arm9_stateFlag == ARM9_DSCM_CARDSCRIPT) {

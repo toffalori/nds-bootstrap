@@ -2854,11 +2854,29 @@ int arm7_main(void) {
 		// keeps one per CPU: an ARM9 read after an ARM7 handshake got
 		// FFFFFFFF). A data-mode chip ID read there, last thing before the game:
 		// the card's ID if that session is live.
+		// Then the bus to the ARM7 and back, and a second read: if that keeps
+		// the session, the game starts with the ARM7 on Slot-1 as on a stock
+		// boot, else the ARM9 keeps it.
+		arm9_cardArgs[0] = 1;
+		arm9_cardArgs[1] = 0x11111111;
+		const u32 first = dscmCartProbeChipId();
+		const u32 afterSwitch = arm9_cardArgs[1];
 		dbg_printf("DScheevos cart: ARM9 card check, chip ");
 		dbg_hexa(cartChipID);
 		dbg_printf(" read ");
-		dbg_hexa(dscmCartProbeChipId());
+		dbg_hexa(first);
+		dbg_printf(" words ");
+		dbg_hexa(arm9_cardArgs[2]);
+		dbg_printf(" romctrl ");
+		dbg_hexa(arm9_cardArgs[3]);
+		dbg_printf(" after a bus switch ");
+		dbg_hexa(afterSwitch);
 		dbg_printf("\n");
+		if (afterSwitch == cartChipID) {
+			arm9_stateFlag = ARM9_DSCM_CARDTOARM7;
+			while (arm9_stateFlag != ARM9_READY);
+			dbg_printf("DScheevos cart: the game starts with the ARM7 on Slot-1\n");
+		}
 	}
 #endif
 	arm9_stateFlag = ARM9_SETSCFG;
