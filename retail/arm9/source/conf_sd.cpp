@@ -863,7 +863,9 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 	conf->bootstrapOnFlashcard = ((bootstrapPath[0] == 'f' && bootstrapPath[1] == 'a' && bootstrapPath[2] == 't') || !conf->sdFound);
 
 	load_conf(conf, conf->bootstrapOnFlashcard ? "fat:/_nds/nds-bootstrap.ini" : "sd:/_nds/nds-bootstrap.ini");
+	dscheevosMark("ini parsed");
 	dscheevosStage1LogTo(conf->logging);	// DScheevos: stage1.log only with LOGGING = 1
+	dscheevosMark("first stage1.log write");
 
 	conf->initDisc = (REG_SCFG_EXT == 0);
 
@@ -946,6 +948,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 		mkdir("fat:/_nds/nds-bootstrap", 0777);
 		mkdir("fat:/_nds/nds-bootstrap/patchOffsetCache", 0777);
 	}
+	dscheevosMark("folders made");
 
 	pageFilePath = "sd:/_nds/pagefile.sys";
 	if (conf->b4dsMode || conf->bootstrapOnFlashcard) {
@@ -1637,7 +1640,9 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 
 		if (!conf->isDSiWare || (conf->valueBits4 & BIT(0))) {
 			// Load external cheat engine binary
+			dscheevosMark("Slot-1 and WRAM checks");
 			loadCardEngineBinary("nitro:/cardenginei_arm7_cheat.bin", (u8*)CHEAT_ENGINE_BUFFERED_LOCATION);
+			dscheevosMark("cheat engine read");
 
 			cardengineArm7* ce7 = (cardengineArm7*)CARDENGINEI_ARM7_BUFFERED_LOCATION;
 
@@ -1725,6 +1730,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 				, (u8*)CARDENGINEI_ARM9_BUFFERED_LOCATION);
 			}
 
+			dscheevosMark("ce7 and ce9 read");
 			bool found = (access(pageFilePath.c_str(), F_OK) == 0);
 			if (!found) {
 				myConsoleDemoInit();
@@ -1748,26 +1754,44 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 			}
 			fclose(cebin);
 
-			const int language = (conf->language >= 0 && conf->language <= 7) ? conf->language : PersonalData->language;
-			char path[256];
-			sprintf(path, "nitro:/preLoadSettings%s-%s.pck", conf->consoleModel > 0 ? "3DS" : "DSi", getLangString(language));
-
-			bool preLoadRes = loadPreLoadSettings(conf, path, romTid, headerCRC);
-			if (!preLoadRes && language != 1) {
-				sprintf(path, "nitro:/preLoadSettings%s-%s.pck", conf->consoleModel > 0 ? "3DS" : "DSi", getLangString(1));
-				preLoadRes = loadPreLoadSettings(conf, path, romTid, headerCRC);
+			dscheevosMark("page file sized, touch fix read");
+			if (dscheevosCartBoot) {
+				// Cheevotron cart mode: nothing is preloaded or read ahead from SD
+				// (the game reads the cartridge on demand), and these lookups mount
+				// the ROM file's own file system for some games (Pokemon Gen 4: its
+				// sound archive), which the header stub doesn't have: HeartGold
+				// froze in it.
+				for (int i = 0; i < 4; i++) {
+					conf->dataToPreloadAddr[i] = 0;
+					conf->dataToPreloadSize[i] = 0;
+				}
+				for (int i = 0; i < 2; i++) {
+					conf->asyncDataAddr[i] = 0;
+					conf->asyncDataSize[i] = 0;
+				}
+			} else {
+				const int language = (conf->language >= 0 && conf->language <= 7) ? conf->language : PersonalData->language;
+				char path[256];
+				sprintf(path, "nitro:/preLoadSettings%s-%s.pck", conf->consoleModel > 0 ? "3DS" : "DSi", getLangString(language));
+	
+				bool preLoadRes = loadPreLoadSettings(conf, path, romTid, headerCRC);
+				if (!preLoadRes && language != 1) {
+					sprintf(path, "nitro:/preLoadSettings%s-%s.pck", conf->consoleModel > 0 ? "3DS" : "DSi", getLangString(1));
+					preLoadRes = loadPreLoadSettings(conf, path, romTid, headerCRC);
+				}
+				if (!preLoadRes) {
+					sprintf(path, "nitro:/preLoadSettings%s.pck", conf->consoleModel > 0 ? "3DS" : "DSi");
+					preLoadRes = loadPreLoadSettings(conf, path, romTid, headerCRC);
+				}
+				if (!preLoadRes) {
+					// Set NitroFS pre-load, in case if full ROM pre-load fails
+					conf->dataToPreloadAddr[0] = ndsArm7BinOffset+ndsArm7Size;
+					conf->dataToPreloadSize[0] = ((internalRomSize == 0 || internalRomSize > conf->romSize) ? conf->romSize : internalRomSize)-conf->dataToPreloadAddr[0];
+					// conf->dataToPreloadFrame = 0;
+				}
+				loadAsyncLoadSettings(conf, romTid, headerCRC);
 			}
-			if (!preLoadRes) {
-				sprintf(path, "nitro:/preLoadSettings%s.pck", conf->consoleModel > 0 ? "3DS" : "DSi");
-				preLoadRes = loadPreLoadSettings(conf, path, romTid, headerCRC);
-			}
-			if (!preLoadRes) {
-				// Set NitroFS pre-load, in case if full ROM pre-load fails
-				conf->dataToPreloadAddr[0] = ndsArm7BinOffset+ndsArm7Size;
-				conf->dataToPreloadSize[0] = ((internalRomSize == 0 || internalRomSize > conf->romSize) ? conf->romSize : internalRomSize)-conf->dataToPreloadAddr[0];
-				// conf->dataToPreloadFrame = 0;
-			}
-			loadAsyncLoadSettings(conf, romTid, headerCRC);
+			dscheevosMark("preload settings");
 		} else {
 			const bool binary3 = (REG_SCFG_EXT7 == 0 ? !dsiEnhancedMbk : (a7mbk6 != 0x00403000));
 
@@ -2120,6 +2144,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 			*(u32*)(COLOR_LUT_BUFFERED_LOCATION-4) = 0x54554C63; // 'cLUT'
 			tonccpy((u16*)COLOR_LUT_BUFFERED_LOCATION, VRAM_E, 0x10000);
 		}
+		dscheevosMark("bootloader images read");
 	} else {
 		if (accessControl & BIT(4)) {
 			uint8_t *target = new uint8_t[0x1000];
@@ -2708,6 +2733,7 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 		fclose(srParamsFile);
 	}
 	dscheevosSanitizeSoftReset(conf, srParamsFilePath.c_str());
+	dscheevosMark("mobiclip offsets, soft-reset params");
 
 	conf->donorFileOffset = 0;
 
@@ -2934,9 +2960,11 @@ int loadFromSD(configuration* conf, const char *bootstrapPath) {
 	// Create RAM dump binary
 	dscheevosMark("patch offset cache checked");
 	createRamDumpBin(conf);
+	dscheevosMark("RAM dump file checked");
 
 	// Create AP-fixed overlay binary
 	createApFixOverlayBin(conf);
+	dscheevosMark("AP-fix overlay file checked");
 
 	if ((!dsiFeatures() || conf->b4dsMode) || (conf->valueBits4 & BIT(0)) || !conf->isDSiWare) {
 		// Update modified date

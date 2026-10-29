@@ -380,6 +380,7 @@ static int runNdsFile(configuration* conf) {
 		}
 	}
 
+	dscheevosMark("runNdsFile start");
 	if (dsiFeatures()) {
 		// ROM read LED
 		switch(conf->romRead_LED) {
@@ -504,6 +505,7 @@ static int runNdsFile(configuration* conf) {
 		}
 	}
 
+	dscheevosMark("game lists and CPU clock");
 	if (isDSiMode()) {
 		dscheevosStage1Log("a", "stage1: scfg9 ext=%08lX clk=%04X, arm7 ext at start=%08lX, arm7 step %d",
 			REG_SCFG_EXT, REG_SCFG_CLK, REG_SCFG_EXT7, REG_IPC_SYNC & 0xF);

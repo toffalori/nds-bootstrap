@@ -2044,6 +2044,7 @@ int arm7_main(void) {
 		dbg_printf("Secure area already decrypted");
 	}
 	dbg_printf("\n");
+	dscheevosStamp("arm9 unpacked, secure area checked");
 
 	// Calculate overlay pack size
 	if (baseArm9OvlSrc > baseArm7Off) {
@@ -2557,6 +2558,7 @@ int arm7_main(void) {
 				errorOutput();
 			}
 		}
+		dscheevosStamp("engines placed");
 		patchHiHeapPointer(moduleParams, ndsHeader);
 
 		toncset((u32*)CARDENGINEI_ARM9_BUFFERED_LOCATION, 0, 0x10000);
@@ -2775,6 +2777,7 @@ int arm7_main(void) {
 
 			if (dscheevosStream()) {   // same binaries at every start of a game: write what changed
 				dscheevosPageFileUpdate((char*)ndsHeader->arm9destination, &pageFile, 0x14000, iUncompressedSize);
+				dscheevosStamp("page file: arm9 compared");
 				dscheevosPageFileUpdate((char*)ndsHeader->arm7destination, &pageFile, 0x2C0000, newArm7binarySize);
 			} else {
 				fileWrite((char*)ndsHeader->arm9destination, &pageFile, 0x14000, iUncompressedSize);
@@ -2834,9 +2837,11 @@ int arm7_main(void) {
 		fileWrite((char*)&arm9_SCFG_EXT, &pageFile, IGM_TEXT_SIZE_ALIGNED+0x8, sizeof(u32));
 		fileWrite((char*)&arm9_SCFG_CLK, &pageFile, IGM_TEXT_SIZE_ALIGNED+0xC, sizeof(u16));
 	}
+	dscheevosStamp("in-game menu SCFG written");
 
 	// dbg_printf("Starting the NDS file...");
     setMemoryAddress(ndsHeader, moduleParams);
+	dscheevosStamp("memory set");
 
 	if (0 == (REG_KEYINPUT & (KEY_L | KEY_R | KEY_DOWN | KEY_A))) {
 		aFile ramDumpFile;

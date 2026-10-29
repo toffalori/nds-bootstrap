@@ -18,6 +18,8 @@
 #include "dscm_record.h"
 #include "cheevotron_loading.h"
 
+void dscheevosMark(const char* what);	// main.cpp: a timed step, written with the next stage1.log line
+
 #define DSCHEEVOS_DIR "sd:/_nds/dscheevos/"
 #define DSCHEEVOS_SESSION_HEAD (DSCHEEVOS_S_UNIX_TIME + 4)
 // The launcher writes the session a few seconds before it boots
@@ -218,11 +220,13 @@ int dscheevosFindSession(configuration* conf) {
 	if (!readSession(conf, head, &stModule, &stSession)) {
 		return DSCHEEVOS_SESSION_NONE;
 	}
+	dscheevosMark("session file read");
 
 	remove(DSCHEEVOS_DIR "session.used");
 	if (rename(DSCHEEVOS_DIR "session.bin", DSCHEEVOS_DIR "session.used") != 0) {
 		return DSCHEEVOS_SESSION_NONE;
 	}
+	dscheevosMark("session renamed to session.used");
 #ifdef DSCHEEVOS_RCHASH
 	// Cart mode: the session names the launcher's header stub, not a ROM, and
 	// comes with no hash; the bootloader hashes the cartridge itself.

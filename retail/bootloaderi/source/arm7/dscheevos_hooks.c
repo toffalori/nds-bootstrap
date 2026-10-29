@@ -340,26 +340,35 @@ void dscheevosPageFileUpdate(const char* src, aFile* file, u32 offset, u32 size)
 	dbg_printf(" bytes written\n");
 }
 
-// Boot clock for the log: tenths of a second since the bootloader started
-// (ARM7 timers 0 and 1 cascaded at 32768 Hz, main.arm7.c).
+// Boot clock for the log: milliseconds since the bootloader started (ARM7
+// timers 0 and 1 cascaded at 32768 Hz, main.arm7.c). One line, one log write.
 void dscheevosStamp(const char* what) {
-	u32 tenths = bootTicks() / 3277;
+	static const char head[] = "DScheevos t=";
+	u32 ms = (bootTicks() * 125) >> 12;	// 32768 Hz ticks
 	char digits[12];
-	char out[14];
+	char out[96];
 	int n = 0, m = 0;
+	for (int i = 0; head[i]; i++) {
+		out[m++] = head[i];
+	}
 	do {
-		digits[n++] = '0' + tenths % 10;
-		tenths /= 10;
-	} while (tenths);
+		digits[n++] = '0' + ms % 10;
+		ms /= 10;
+	} while (ms);
 	while (n) {
 		out[m++] = digits[--n];
 	}
+	out[m++] = ' ';
+	out[m++] = 'm';
+	out[m++] = 's';
+	out[m++] = ':';
+	out[m++] = ' ';
+	for (int i = 0; what[i] && m < (int)sizeof(out) - 2; i++) {
+		out[m++] = what[i];
+	}
+	out[m++] = '\n';
 	out[m] = 0;
-	dbg_printf("DScheevos t=");
 	dbg_printf(out);
-	dbg_printf("/10 s: ");
-	dbg_printf(what);
-	dbg_printf("\n");
 }
 
 static void disable(const char* why) {
@@ -449,6 +458,7 @@ static void wipeSession(aFile* file, const u32 size) {
 	static u32 zero[128];
 	dscheevosNetWanted(); // both read the file once and keep the answer
 	dscheevosHardcore();
+	dscheevosStamp("session flags read");
 	for (u32 i = 0; i < size; i += sizeof(zero)) {
 		fileWrite((char*)zero, file, i, (size - i < sizeof(zero)) ? size - i : sizeof(zero));
 	}
