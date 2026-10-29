@@ -218,6 +218,16 @@ static u32 scriptLen = 0;
 #define DSCM_CART_BOUNCE      ((u32*)0x02F10000)   /* ARM9 reads for a WRAM destination */
 #define DSCM_CART_BOUNCE_SIZE 0x10000
 
+#ifdef LOADERTYPE2
+/* bootloaderi2's ARM9 side has no card helpers: there the whole handshake
+ * stays on the ARM7 (native cart mode runs in bootloaderi only). These only
+ * satisfy the references below, which never run. */
+volatile u32 arm9_cardArgs[4];
+volatile u32 arm9_cardProbe;
+volatile u32 arm9_cardProbeFlags;
+#define dscheevosCartNative() false
+#endif
+
 static void arm9Do(int state) {
 	while (arm9_stateFlag != ARM9_READY);
 	arm9_stateFlag = state;
