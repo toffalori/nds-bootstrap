@@ -877,6 +877,7 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp, aFile* romFile) {
 	// ready as a cold boot would), then read it.
 	dbg_printf("DScheevos cart: enableSlot1\n");
 	my_enableSlot1();
+	dscmCartArm9Unreset();
 	dbg_printf("DScheevos cart: cardReset\n");
 	cardReset();
 	dbg_printf("DScheevos cart: cardInit\n");

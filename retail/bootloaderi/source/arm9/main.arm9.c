@@ -686,6 +686,17 @@ void arm9_main(void) {
 			}
 			arm9_stateFlag = ARM9_READY;
 		}
+		if (arm9_stateFlag == ARM9_DSCM_CARDUNRESET) {
+			// my_enableSlot1 (ARM7) powers the slot and releases the card's reset
+			// on the ARM7's side only (ROMCTRL bit 29). Taking the bus later with
+			// the ARM9's bit still low reset the card mid-session (both CPUs then
+			// read FFFFFFFF / garbage). Release it here too, before any command.
+			REG_EXMEMCNT &= ~BIT(11);
+			*(vu8*)0x040001A1 = 0xC0;              // AUXSPICNT: slot enabled, ROM mode
+			*(vu32*)0x040001A4 = BIT(29);          // ROMCTRL: nRESET
+			REG_EXMEMCNT |= BIT(11);
+			arm9_stateFlag = ARM9_READY;
+		}
 		if (arm9_stateFlag == ARM9_DSCM_CARDTOARM7) {
 			REG_EXMEMCNT |= BIT(11);               // the game starts with the ARM7 on Slot-1, as on a stock boot
 			arm9_stateFlag = ARM9_READY;

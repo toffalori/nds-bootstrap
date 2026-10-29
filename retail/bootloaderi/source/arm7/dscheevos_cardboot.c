@@ -409,6 +409,14 @@ int dscmCartInit(tNDSHeader* ndsHeader, u32* chipID) {
 	return DSCM_CART_OK;
 }
 
+void dscmCartArm9Unreset(void) {
+#ifndef LOADERTYPE2
+	if (dscheevosCartNative()) {
+		arm9Do(ARM9_DSCM_CARDUNRESET);
+	}
+#endif
+}
+
 u32 dscmCartProbeFlags(void) {
 	return (portFlags & ~CARD_BLK_SIZE(7)) | CARD_ACTIVATE | CARD_nRESET | CARD_BLK_SIZE(7);
 }

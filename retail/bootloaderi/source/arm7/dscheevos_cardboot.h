@@ -28,6 +28,11 @@ void dscmCartRead(u32 src, u32* dest, size_t size);
  * while the KEY2 session is live for the reading CPU; and the ROMCTRL value
  * for it (the ARM9's probe uses the same). */
 u32 dscmCartProbeFlags(void);
+
+/* Native mode, right after the slot's power-on (my_enableSlot1, which releases
+ * the card's reset on the ARM7's side only): the ARM9's side out of reset too,
+ * so the ARM9 taking the bus later doesn't reset the card. */
+void dscmCartArm9Unreset(void);
 u32 dscmCartProbeChipId(void);
 
 /* The cartridge's RetroAchievements hash (dscheevos_carthash.c), computed as

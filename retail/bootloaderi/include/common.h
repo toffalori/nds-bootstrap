@@ -68,6 +68,7 @@
 #define ARM9_DSCM_CARDSCRIPT 16   // Cheevotron native cart: the KEY2 part of the handshake (arm9_cardArgs[0]: the script)
 #define ARM9_DSCM_CARDREAD 17     // and a data read (arm9_cardArgs: card offset, destination, bytes, ROMCTRL)
 #define ARM9_DSCM_CARDTOARM7 18   // Slot-1 to the ARM7 for the game's start
+#define ARM9_DSCM_CARDUNRESET 19  // after the slot's power-on: the ARM9's side of the card port out of reset too
 //};
 
 extern u32* arm9executeAddress;
