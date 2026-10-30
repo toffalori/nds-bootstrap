@@ -228,10 +228,24 @@ volatile u32 arm9_cardProbeFlags;
 #define dscheevosCartNative() false
 #endif
 
+/* Waits for the ARM9 without hammering main RAM: arm9_stateFlag lives there,
+ * the ARM7 has main RAM priority (EXMEMCNT bit 15), and the ARM9 runs its
+ * card loop uncached from main RAM. Polled back to back, the flag starved
+ * it: HeartGold's ARM9 binary read at 0.42 MB/s, a quarter of what its
+ * header's timing allows. About 30 us between polls, the count in a
+ * register and the code in VRAM. */
+static void waitArm9Ready(void) {
+	while (arm9_stateFlag != ARM9_READY) {
+		for (int i = 0; i < 256; i++) {
+			asm volatile("");
+		}
+	}
+}
+
 static void arm9Do(int state) {
-	while (arm9_stateFlag != ARM9_READY);
+	waitArm9Ready();
 	arm9_stateFlag = state;
-	while (arm9_stateFlag != ARM9_READY);
+	waitArm9Ready();
 }
 
 /* A transfer: ARM7 now, or appended to the ARM9's script. words = the reply
