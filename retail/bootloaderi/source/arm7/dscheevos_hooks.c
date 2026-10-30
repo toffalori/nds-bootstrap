@@ -349,6 +349,20 @@ void dscheevosPageFileUpdate(const char* src, aFile* file, u32 offset, u32 size)
 	dbg_printf(" bytes written\n");
 }
 
+// A few bytes that are the same at nearly every start: read and compare
+// first. Each small write is a sector's read-modify-write, 0.1-0.2 s on the
+// SD card here; the read alone takes a few ms.
+void dscheevosFileWriteChanged(const void* src, aFile* file, u32 offset, u32 size) {
+	u8 have[16];
+	if (size <= sizeof(have)) {
+		fileRead((char*)have, file, offset, size);
+		if (memcmp(have, src, size) == 0) {
+			return;
+		}
+	}
+	fileWrite((const char*)src, file, offset, size);
+}
+
 // The boot timeline in RAM (DSCHEEVOS_BOOTLOG), which stage 1 started with its
 // own lines: each stamp goes there too, with or without LOGGING, for the
 // streamer module to send to the phone.
@@ -494,14 +508,23 @@ static void dscheevosRecordSetup(cardengineArm7* ce7) {
 
 // session.used keeps its clusters; once the session is in RAM its contents
 // are zeroed, so the file can't be booted again (and the login token in it
-// doesn't stay on the SD card).
+// doesn't stay on the SD card). Stream sessions write 48 KB of zeros at a time
+// from the page file's scratch (fileWrite then writes a cluster per command;
+// one 512-byte write each sector took 0.44 s for HeartGold's session).
 static void wipeSession(aFile* file, const u32 size) {
 	static u32 zero[128];
+	const char* buf = (const char*)zero;
+	u32 chunk = sizeof(zero);
 	dscheevosNetWanted(); // both read the file once and keep the answer
 	dscheevosHardcore();
 	dscheevosStamp("session flags read");
-	for (u32 i = 0; i < size; i += sizeof(zero)) {
-		fileWrite((char*)zero, file, i, (size - i < sizeof(zero)) ? size - i : sizeof(zero));
+	if (dscheevosStream()) {
+		toncset(PAGE_SCRATCH, 0, PAGE_CHUNK);
+		buf = (const char*)PAGE_SCRATCH;
+		chunk = PAGE_CHUNK;
+	}
+	for (u32 i = 0; i < size; i += chunk) {
+		fileWrite(buf, file, i, (size - i < chunk) ? size - i : chunk);
 	}
 }
 

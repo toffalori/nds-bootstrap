@@ -88,6 +88,7 @@ extern bool dscheevosCartNative(void);              // dscheevos_hooks.c
 extern bool dscheevosStream(void);                  // dscheevos_hooks.c
 extern void dscheevosLoadingScreen(void);           // dscheevos_hooks.c
 extern void dscheevosPageFileUpdate(const char* src, aFile* file, u32 offset, u32 size);   // dscheevos_hooks.c
+extern void dscheevosFileWriteChanged(const void* src, aFile* file, u32 offset, u32 size);  // dscheevos_hooks.c
 #include "dscheevos_cardboot.h"                      // dscmCartInit, dscmCartRead, dscmCartHash
 bool dscheevosCartMode = false;                     // boot the inserted Slot-1 cart, not the SD ROM
 
@@ -2057,6 +2058,7 @@ int arm7_main(void) {
 		toncset((char*)0x02700000, 0, 0x3000);
 	}
 
+	dscheevosStamp("RAM cleared, unpacking");
 	//if (gameOnFlashcard || !isDSiWare || !dsiWramAccess) {
 		ensureBinaryDecompressed(&dsiHeaderTemp.ndshdr, moduleParams, ltdModuleParams, true);
 	//}
@@ -2814,8 +2816,8 @@ int arm7_main(void) {
 				fileWrite((char*)ndsHeader->arm9destination, &pageFile, 0x14000, iUncompressedSize);
 				fileWrite((char*)ndsHeader->arm7destination, &pageFile, 0x2C0000, newArm7binarySize);
 			}
-			fileWrite((char*)&iUncompressedSize, &pageFile, 0x5FFFF0, sizeof(u32));
-			fileWrite((char*)&newArm7binarySize, &pageFile, 0x5FFFF4, sizeof(u32));
+			const u32 binarySizes[2] = {iUncompressedSize, newArm7binarySize};   // one write, if changed
+			dscheevosFileWriteChanged(binarySizes, &pageFile, 0x5FFFF0, sizeof(binarySizes));
 			if (ROMsupportsDsiMode(ndsHeader) && dsiModeConfirmed) {
 				fileWrite((char*)(*(u32*)0x02FFE1C8), &pageFile, 0x300000, iUncompressedSizei);
 				fileWrite((char*)(*(u32*)0x02FFE1D8), &pageFile, 0x580000, newArm7ibinarySize);
@@ -2895,9 +2897,12 @@ int arm7_main(void) {
 		getFileFromCluster(&pageFile, pageFileCluster, bootstrapOnFlashcard);
 
 		// Write ARM9 SCFG registers to in-game menu before locking the registers
-		fileWrite((char*)&waitSysCyclesOffset, &pageFile, IGM_TEXT_SIZE_ALIGNED+0x4, sizeof(u32));
-		fileWrite((char*)&arm9_SCFG_EXT, &pageFile, IGM_TEXT_SIZE_ALIGNED+0x8, sizeof(u32));
-		fileWrite((char*)&arm9_SCFG_CLK, &pageFile, IGM_TEXT_SIZE_ALIGNED+0xC, sizeof(u16));
+		// (DScheevos: as one write, and only when they changed: 0.5 s for three)
+		u8 scfg[10];
+		memcpy(scfg, &waitSysCyclesOffset, sizeof(u32));
+		memcpy(scfg + 4, (const void*)&arm9_SCFG_EXT, sizeof(u32));
+		memcpy(scfg + 8, (const void*)&arm9_SCFG_CLK, sizeof(u16));
+		dscheevosFileWriteChanged(scfg, &pageFile, IGM_TEXT_SIZE_ALIGNED+0x4, sizeof(scfg));
 	}
 	dscheevosStamp("in-game menu SCFG written");
 

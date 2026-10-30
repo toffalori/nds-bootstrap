@@ -95,6 +95,10 @@ u32 iUncompressedSizei = 0;
 static u32 iFixedAddr = 0;
 static u32 iFixedData = 0;
 
+// DScheevos: ARM code (the bootloader is Thumb otherwise), for boot time:
+// HeartGold's ARM9 binary took about 1.2 s to unpack in Thumb.
+__attribute__((target("arm")))
+__attribute__((noinline))
 static u32 decompressBinary(u8 *aMainMemory, u32 aCodeLength, u32 aMemOffset) {
 	u8 *ADDR1 = NULL;
 	u8 *ADDR1_END = NULL;
