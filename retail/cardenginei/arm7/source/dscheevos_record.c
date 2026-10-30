@@ -240,7 +240,7 @@ static void fillHeader(dscm_rec_t* rec, u8 flags) {
 	h->end_frame = rec->end_frame;
 	h->skipped = rec->sd_skipped;
 	h->errors = rec->sd_errors;
-	h->reserved = 0;
+	h->phone_frame = rec->phone_frame;   // the phone's last live frame (module, from its KEEPALIVE)
 }
 
 // The next stream sector to write, skipping what the ring has overwritten;
