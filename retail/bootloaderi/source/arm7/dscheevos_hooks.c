@@ -349,35 +349,67 @@ void dscheevosPageFileUpdate(const char* src, aFile* file, u32 offset, u32 size)
 	dbg_printf(" bytes written\n");
 }
 
-// Boot clock for the log: milliseconds since the bootloader started (ARM7
-// timers 0 and 1 cascaded at 32768 Hz, main.arm7.c). One line, one log write.
-void dscheevosStamp(const char* what) {
-	static const char head[] = "DScheevos t=";
-	u32 ms = (bootTicks() * 125) >> 12;	// 32768 Hz ticks
-	char digits[12];
-	char out[96];
-	int n = 0, m = 0;
-	for (int i = 0; head[i]; i++) {
-		out[m++] = head[i];
+// The boot timeline in RAM (DSCHEEVOS_BOOTLOG), which stage 1 started with its
+// own lines: each stamp goes there too, with or without LOGGING, for the
+// streamer module to send to the phone.
+void dscheevosBootLogAdd(const char* text) {
+	vu32* head = (vu32*)DSCHEEVOS_BOOTLOG;
+	if (!dscheevosWanted() || head[0] != DSCHEEVOS_BOOTLOG_MAGIC) {
+		return;
 	}
+	char* out = (char*)DSCHEEVOS_BOOTLOG + 8;
+	u32 len = head[1];
+	for (int i = 0; text[i] && len < DSCHEEVOS_BOOTLOG_SIZE - 8; i++) {
+		out[len++] = text[i];
+	}
+	head[1] = len;
+}
+
+static int putText(char* out, int m, int max, const char* text) {
+	for (int i = 0; text[i] && m < max; i++) {
+		out[m++] = text[i];
+	}
+	return m;
+}
+
+static int putDec(char* out, int m, u32 v) {
+	char digits[12];
+	int n = 0;
 	do {
-		digits[n++] = '0' + ms % 10;
-		ms /= 10;
-	} while (ms);
+		digits[n++] = '0' + v % 10;
+		v /= 10;
+	} while (v);
 	while (n) {
 		out[m++] = digits[--n];
 	}
-	out[m++] = ' ';
-	out[m++] = 'm';
-	out[m++] = 's';
-	out[m++] = ':';
-	out[m++] = ' ';
-	for (int i = 0; what[i] && m < (int)sizeof(out) - 2; i++) {
-		out[m++] = what[i];
-	}
+	return m;
+}
+
+// Boot clock for the log: milliseconds since the bootloader started (ARM7
+// timers 0 and 1 cascaded at 32768 Hz, main.arm7.c). One line, one log write.
+void dscheevosStamp(const char* what) {
+	char out[96];
+	int m = putText(out, 0, sizeof(out), "DScheevos t=");
+	m = putDec(out, m, (bootTicks() * 125) >> 12);	// 32768 Hz ticks
+	m = putText(out, m, sizeof(out), " ms: ");
+	m = putText(out, m, sizeof(out) - 2, what);
 	out[m++] = '\n';
 	out[m] = 0;
 	dbg_printf(out);
+	dscheevosBootLogAdd(out + sizeof("DScheevos ") - 1);	// "t=<ms> ms: <step>"
+}
+
+// Both clocks when the bootloader's ARM9 started, for the timeline: the
+// bootloader's ms and stage 1's (its ARM9 timers keep running, 32728 Hz).
+void dscheevosBootLogClocks(u32 bootTicksThen, u32 stage1TicksThen) {
+	char out[64];
+	int m = putText(out, 0, sizeof(out), "t=");
+	m = putDec(out, m, (bootTicksThen * 125) >> 12);
+	m = putText(out, m, sizeof(out), " ms: ARM9 started, stage 1 ms ");
+	m = putDec(out, m, stage1TicksThen * 1000 / 32728);
+	out[m++] = '\n';
+	out[m] = 0;
+	dscheevosBootLogAdd(out);
 }
 
 static void disable(const char* why) {

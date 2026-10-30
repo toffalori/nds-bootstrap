@@ -82,6 +82,7 @@ extern bool dscheevosNetWanted(void);
 extern bool dscheevosHardcore(void);
 extern void dscheevosSetup(cardengineArm7* ce7, cardengineArm9* ce9, const tNDSHeader* ndsHeader);
 extern void dscheevosStamp(const char* what);
+extern void dscheevosBootLogClocks(u32 bootTicksThen, u32 stage1TicksThen);
 extern bool dscheevosBootFromCart(void);            // dscheevos_hooks.c
 extern bool dscheevosCartNative(void);              // dscheevos_hooks.c
 extern bool dscheevosStream(void);                  // dscheevos_hooks.c
@@ -882,6 +883,7 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp, aFile* romFile) {
 	cardReset();
 	dbg_printf("DScheevos cart: cardInit\n");
 	cartErr = dscmCartInit(h, &chipID);
+	dscheevosStamp("cart started (header, KEY1, secure area)");
 	dbg_printf("DScheevos cart init err=");
 	dbg_hexa((u32)cartErr);
 	dbg_printf(" chipID=");
@@ -904,6 +906,7 @@ static void loadBinary_ARM7_cart(tDSiHeader* dsiHeaderTemp, aFile* romFile) {
 	if ((u32)h->arm9destination < 0x02400000) {
 		dscmCartRead((u32)h->arm9romOffset, (u32*)h->arm9destination, h->arm9binarySize);
 	}
+	dscheevosStamp("cart arm9 binary read");
 	dscmCartRead((u32)h->arm7romOffset, (u32*)h->arm7destination, h->arm7binarySize);
 	dscheevosStamp("cart binaries read");
 	// The card's RetroAchievements hash, from the binaries just read, the raw
@@ -1894,6 +1897,7 @@ int arm7_main(void) {
 		dbg_printf(" ticks, at ");
 		dbg_hexa(arm9_stage1Ticks);   // the first stage's clock (32728 Hz), as stage1.log's ms
 		dbg_printf(" stage 1 ticks\n");
+		dscheevosBootLogClocks(arm9StartTicks, arm9_stage1Ticks);
 #else
 		dbg_printf(" ticks\n");
 #endif
@@ -2032,7 +2036,9 @@ int arm7_main(void) {
 	} else {
 		toncset((u32*)0x02400000, 0, 0x2000);
 		dma_twlFill32(0, 0, (u32*)0x02500000, 0x100000);	// clear part of EWRAM - except before in-game menu data
-		memset_addrs_arm7(0x02F00000, 0x02F80000);
+		// all but the boot timeline (dscheevos_hooks.h) when the module will send it
+		memset_addrs_arm7(0x02F00000, dscheevosWanted() ? DSCHEEVOS_BOOTLOG : DSCHEEVOS_BOOTLOG + DSCHEEVOS_BOOTLOG_SIZE);
+		memset_addrs_arm7(DSCHEEVOS_BOOTLOG + DSCHEEVOS_BOOTLOG_SIZE, 0x02F80000);
 		memset_addrs_arm7(0x02FFE000, 0x02FFF000); // clear DSi header
 
 		extern u32* lastClusterCacheUsed;

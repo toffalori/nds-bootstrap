@@ -207,11 +207,35 @@ static int dscheevosLogLen = 0;
 static int dscheevosLogSd = -1;	// -1: not known yet, 0: off, 1: on
 #define DSCHEEVOS_STAGE1_LOG_MAX (64 * 1024)	// then it starts over
 
+// Every line also goes to the boot timeline in RAM (DSCHEEVOS_BOOTLOG), which
+// the streamer module sends to the phone. DSi only: a DS has no RAM there.
+static void dscheevosBootLogStart(void) {
+	if (!isDSiMode()) return;
+	vu32* head = (vu32*)DSCHEEVOS_BOOTLOG;
+	head[0] = DSCHEEVOS_BOOTLOG_MAGIC;
+	head[1] = 0;
+}
+
+static void dscheevosBootLogAdd(const char* text, int n) {
+	if (!isDSiMode()) return;
+	vu32* head = (vu32*)DSCHEEVOS_BOOTLOG;
+	char* out = (char*)DSCHEEVOS_BOOTLOG + 8;
+	u32 len = head[1];
+	for (int i = 0; i < n && len < DSCHEEVOS_BOOTLOG_SIZE - 8; i++) {
+		out[len++] = text[i];
+	}
+	head[1] = len;
+}
+
 static void dscheevosLogAppend(const char* fmt, va_list ap) {
 	const int room = (int)sizeof(dscheevosLogText) - dscheevosLogLen;
 	if (room <= 1) return;
 	const int n = vsnprintf(dscheevosLogText + dscheevosLogLen, room, fmt, ap);
-	if (n > 0) dscheevosLogLen += n < room ? n : room - 1;
+	if (n > 0) {
+		const int got = n < room ? n : room - 1;
+		dscheevosBootLogAdd(dscheevosLogText + dscheevosLogLen, got);
+		dscheevosLogLen += got;
+	}
 }
 
 static void dscheevosLogPrintf(const char* fmt, ...) {
@@ -768,6 +792,7 @@ static int runNdsFile(configuration* conf) {
 
 int main(int argc, char** argv) {
 	dscheevosClockStart();
+	dscheevosBootLogStart();
 	fifoSendValue32(FIFO_PM, PM_REQ_SLEEP_DISABLE);
 
 	configuration* conf = (configuration*)malloc(sizeof(configuration));

@@ -13,72 +13,36 @@
  * So the binaries are hashed as they are in RAM right after the card read.
  *
  * MD5: RFC 1321, written out plainly; the bootloader has no libc hash and no
- * room for a general one.
+ * room for a general one. The block function is ARM code in
+ * dscheevos_md5.arm.c (speed).
  */
 #include <nds/ndstypes.h>
 #include <string.h>
 #include "dscheevos_cardboot.h"
 
+#ifdef LOADERTYPE2
+/* bootloader2 runs only listed DSiWare titles, never a cartridge, and its
+ * VRAM has no room for the ARM-code MD5. */
+void dscmCartHash(const tNDSHeader* ndsHeader, char out[33]) {
+	(void)ndsHeader;
+	out[0] = 0;
+}
+#else
 typedef struct {
-	u32 a, b, c, d;
+	u32 s[4];          /* a, b, c, d */
 	u32 lo, hi;        /* bytes hashed so far */
 	u8 buf[64];        /* the block being filled */
 } md5_t;
 
-#define F(x, y, z) ((z) ^ ((x) & ((y) ^ (z))))
-#define G(x, y, z) ((y) ^ ((z) & ((x) ^ (y))))
-#define H(x, y, z) ((x) ^ (y) ^ (z))
-#define I(x, y, z) ((y) ^ ((x) | ~(z)))
-#define ROTL(v, s) (((v) << (s)) | ((v) >> (32 - (s))))
-
-static const u32 md5_k[64] = {
-	0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-	0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-	0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-	0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-	0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-	0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-	0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-	0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
-};
-static const u8 md5_r[64] = {
-	7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-	5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-	4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-	6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
-};
-
-/* One 64-byte block, read byte-wise: the data may sit at any alignment. */
-static void md5_block(md5_t* m, const u8* p) {
-	u32 x[16];
-	u32 a = m->a, b = m->b, c = m->c, d = m->d;
-	int i;
-	for (i = 0; i < 16; i++) {
-		x[i] = (u32)p[i * 4] | ((u32)p[i * 4 + 1] << 8) | ((u32)p[i * 4 + 2] << 16) | ((u32)p[i * 4 + 3] << 24);
-	}
-	for (i = 0; i < 64; i++) {
-		u32 f, g, t;
-		if (i < 16)      { f = F(b, c, d); g = i; }
-		else if (i < 32) { f = G(b, c, d); g = (5 * i + 1) & 15; }
-		else if (i < 48) { f = H(b, c, d); g = (3 * i + 5) & 15; }
-		else             { f = I(b, c, d); g = (7 * i) & 15; }
-		t = d;
-		d = c;
-		c = b;
-		b = b + ROTL(a + f + md5_k[i] + x[g], md5_r[i]);
-		a = t;
-	}
-	m->a += a;
-	m->b += b;
-	m->c += c;
-	m->d += d;
-}
+/* One 64-byte block at any alignment (dscheevos_md5.arm.c, ARM code). */
+void dscmMd5Block(u32* state, const u8* p);
+#define md5_block(m, p) dscmMd5Block((m)->s, (p))
 
 static void md5_init(md5_t* m) {
-	m->a = 0x67452301;
-	m->b = 0xefcdab89;
-	m->c = 0x98badcfe;
-	m->d = 0x10325476;
+	m->s[0] = 0x67452301;
+	m->s[1] = 0xefcdab89;
+	m->s[2] = 0x98badcfe;
+	m->s[3] = 0x10325476;
 	m->lo = 0;
 	m->hi = 0;
 }
@@ -131,7 +95,7 @@ static void md5_finish(md5_t* m, char out[33]) {
 		md5_append(m, &pad, 1);
 	}
 	md5_append(m, len, 8);
-	w[0] = m->a; w[1] = m->b; w[2] = m->c; w[3] = m->d;
+	w[0] = m->s[0]; w[1] = m->s[1]; w[2] = m->s[2]; w[3] = m->s[3];
 	for (i = 0; i < 16; i++) {
 		u8 byte = (u8)(w[i / 4] >> (8 * (i & 3)));
 		out[i * 2] = hex[byte >> 4];
@@ -167,4 +131,5 @@ void dscmCartHash(const tNDSHeader* ndsHeader, char out[33]) {
 	dscmCartHashRom(hb, (const u8*)ndsHeader->arm9destination, (const u8*)ndsHeader->arm7destination,
 	                icon, (md5_t*)DSCM_CART_MD5, out);
 }
+#endif
 #endif

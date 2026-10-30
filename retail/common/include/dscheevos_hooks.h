@@ -17,6 +17,16 @@
 #define DSCHEEVOS_CACHE_END       0x0CD80000  // ROM cache must end here (same RAM as DSCHEEVOS_LOCATION)
 #define DSCHEEVOS_CACHE_RESERVE   0x0027C000  // ROM cache lost to the cut: 159 of 760 16 KB slots, every layout
 
+// The boot timeline (Cheevotron), so a boot with LOGGING = 0 is timed too:
+// stage 1's log text, then the bootloader's stamps, kept in RAM for the
+// streamer module to send to the phone once it pairs. Words: magic, text
+// length; then the text. In the module region's spare 4 KB above its heap
+// (dscheevos_module.h: DSCM_HEAP_END up to DSCM_IRQ_STACK_TOP), which no
+// stage clears or uses: stage 1 starts it, the bootloader adds to it.
+#define DSCHEEVOS_BOOTLOG         0x02F7D000
+#define DSCHEEVOS_BOOTLOG_SIZE    0x1000
+#define DSCHEEVOS_BOOTLOG_MAGIC   0x4C425344  // "DSBL"
+
 #define DSCHEEVOS_MAGIC           0x56435344  // "DSCV"
 #define DSCHEEVOS_VERSION         7
 #define DSCHEEVOS_SESSION_MAGIC   0x53435344  // "DSCS"
