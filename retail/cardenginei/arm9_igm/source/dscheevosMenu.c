@@ -307,6 +307,43 @@ static void drawSummary(const DScheevosStatus* s, u32 reconnect, bool reconnectA
 	}
 }
 
+// Cheevotron (the streamer module, the one with a reconnect entry): the phone
+// runs the achievements, so the console has no list or progress to show. The
+// page says how the link to the phone stood when the menu opened; the game,
+// and with it the link, is stopped while the menu is open.
+static void drawStream(const DScheevosStatus* s, bool reconnectAsked) {
+	const char* phone = "Looking for the phone...";
+	FontPalette pal = FONT_LIGHT_GRAY;
+	switch (s->netState) {
+		case DSCHEEVOS_NET_CONNECTING: phone = "Joining the Wi-Fi..."; break;
+		case DSCHEEVOS_NET_PAUSED: phone = "Paused: game uses wireless"; break;
+		case DSCHEEVOS_NET_OFFLINE: phone = "Wi-Fi lost"; pal = FONT_RED; break;
+		default:
+			if (s->netDetail) {   // the streamer's pairing session: nonzero while paired
+				phone = "Phone connected";
+				pal = FONT_LIME;
+			}
+			break;
+	}
+	printCenter(16, 0, (const unsigned char*)"Cheevotron", FONT_WHITE, false);
+	print(1, 3, (const unsigned char*)phone, pal, false);
+	print(1, 5, (const unsigned char*)"Achievements run on the phone:", FONT_LIGHT_GRAY, false);
+	print(1, 6, (const unsigned char*)"the list and your progress", FONT_LIGHT_GRAY, false);
+	print(1, 7, (const unsigned char*)"are in the Cheevotron app.", FONT_LIGHT_GRAY, false);
+	print(1, 9, (const unsigned char*)"The link waits while this", FONT_DARKER_GRAY, false);
+	print(1, 10, (const unsigned char*)"menu is open and comes back", FONT_DARKER_GRAY, false);
+	print(1, 11, (const unsigned char*)"by itself in the game.", FONT_DARKER_GRAY, false);
+	if (s->netRejoins) {
+		print(1, 13, (const unsigned char*)"Wi-Fi rejoins", FONT_DARKER_GRAY, false);
+		printNum(16, 13, s->netRejoins, FONT_DARKER_GRAY);
+	}
+	if (reconnectAsked) {
+		print(1, 22, (const unsigned char*)"Reconnects in game  B: Back", FONT_LIME, false);
+	} else {
+		print(1, 22, (const unsigned char*)"A: Reconnect  B: Back", FONT_LIGHT_GRAY, false);
+	}
+}
+
 // One page of the list, two lines per achievement; `sel` has the cursor
 static void drawList(const DScheevosStatus* s, const DScheevosList* l, u32 sel) {
 	unsigned char line[33];
@@ -409,6 +446,8 @@ void dscheevosMenu(void) {
 			printCenter(16, 0, (const unsigned char*)"RetroAchievements", FONT_WHITE, false);
 			printCenter(16, 3, (const unsigned char*)"Not active", FONT_LIGHT_GRAY, false);
 			print(1, 22, (const unsigned char*)"B: Back", FONT_LIGHT_GRAY, false);
+		} else if (reconnect) {
+			drawStream(s, reconnectAsked);
 		} else if (detail && count) {
 			drawDetail(&l->e[sel]);
 		} else if (list) {
@@ -434,7 +473,7 @@ void dscheevosMenu(void) {
 				// the module only takes note: the work runs once the game does
 				(*(void (*)(void))reconnect)();
 				reconnectAsked = true;
-			} else if (key & (KEY_RIGHT | KEY_DOWN)) {
+			} else if ((key & (KEY_RIGHT | KEY_DOWN)) && !reconnect) {   // Cheevotron: no list here
 				list = true;
 			}
 			continue;
